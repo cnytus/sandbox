@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Futbol Tahmin Aracı</title>
+<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BetFans</title>
 <style>
 :root{color-scheme:light;--bg:#eef4fb;--panel:#fff;--panel2:#f7fafd;--line:#e1e9f2;--txt:#1f2d3d;--muted:#6b7c8f;--accent:#3b6fb0;--accent-soft:#d6e6f7;--good:#2e9e6b;--good-soft:#e3f5ec;--bad:#d9534f;--chip:#eef3f9;--shadow:0 1px 3px rgba(31,45,61,.06),0 6px 20px rgba(31,45,61,.06)}
 *{box-sizing:border-box}
@@ -51,8 +51,8 @@ aside{position:sticky;top:18px;align-self:start}
 #msg{font-size:12px;color:var(--muted);margin-left:4px;font-weight:500}
 </style></head><body>
 <header><div class="inner">
-<h1>⚽ Futbol Tahmin Aracı <span class="tag">· Form Modeli + Piyasa Karşılaştırması</span></h1>
-<div class="sub">Claude'un Poisson modeli; lig maçlarında takımların form (ev/deplasman gol) verisinden bağımsız olasılık üretir, bahis oranının ima ettiği piyasa olasılığıyla karşılaştırır ve <b>değer (edge)</b> arar.</div>
+<h1>⚽ BetFans <span class="tag">· Form Modeli + Piyasa Karşılaştırması</span></h1>
+<div class="sub">BetFans'un Poisson modeli; lig maçlarında takımların form (ev/deplasman gol) verisinden bağımsız olasılık üretir, bahis oranının ima ettiği piyasa olasılığıyla karşılaştırır ve <b>değer (edge)</b> arar.</div>
 <div class="disc">⚠️ İstatistiksel tahmin, garanti değildir. Sorumlu oyna, kaybetmeyi göze alamayacağın parayla oynama.</div>
 </div></header>
 <div class="wrap"><main>
@@ -70,9 +70,9 @@ aside{position:sticky;top:18px;align-self:start}
   <span id="msg"></span>
 </div>
 <div class="legend">
-  <span><b>Claude %</b> — modelin tahmini</span>
+  <span><b>BetFans %</b> — modelin tahmini</span>
   <span><b>Piyasa %</b> — oranın ima ettiği (vig temizli)</span>
-  <span><b>Fark</b> — Claude − Piyasa</span>
+  <span><b>Fark</b> — BetFans − Piyasa</span>
   <span><span class="dot" style="background:var(--good)"></span><b>+3% ve üzeri = DEĞER</b></span>
 </div>
 <div id="matches"></div>
@@ -84,8 +84,8 @@ aside{position:sticky;top:18px;align-self:start}
 <div class="tot"><div class="tl"><span>Toplam oran</span><b id="to">—</b></div>
 <div class="tl"><span>Olası dönüş</span><span class="big" id="po">—</span></div>
 <div class="tl"><span>Net kazanç</span><b id="pf" style="color:var(--accent)">—</b></div>
-<div class="tl"><span style="font-size:11px">Claude tutma şansı*</span><span style="font-size:11px;color:var(--muted)" id="cpb">—</span></div></div>
-<div class="hint" style="margin-top:10px">*Claude model olasılıklarının çarpımı. Ayak arttıkça kazanç↑ tutma şansı↓.</div>
+<div class="tl"><span style="font-size:11px">BetFans tutma şansı*</span><span style="font-size:11px;color:var(--muted)" id="cpb">—</span></div></div>
+<div class="hint" style="margin-top:10px">*BetFans model olasılıklarının çarpımı. Ayak arttıkça kazanç↑ tutma şansı↓.</div>
 </div></aside></div>
 <script>
 const API="https://wrmyxcittludopbjyits.supabase.co/functions/v1/bahis-tahmin";
@@ -94,25 +94,25 @@ let matches=[],coupon=[],uid=1;
 function poisson(k,l){let f=1;for(let i=2;i<=k;i++)f*=i;return Math.exp(-l)*Math.pow(l,k)/f;}
 function calc(lh,la){let ph=0,pd=0,pa=0,o=0,by=0,g=[];for(let i=0;i<10;i++)for(let j=0;j<10;j++){let p=poisson(i,lh)*poisson(j,la);if(i>j)ph+=p;else if(i==j)pd+=p;else pa+=p;if(i+j>2.5)o+=p;if(i>=1&&j>=1)by+=p;g.push({s:i+"-"+j,p});}g.sort((a,b)=>b.p-a.p);return{"1":ph,"X":pd,"2":pa,"O":o,"U":1-o,"BY":by,"BN":1-by,top:g.slice(0,4)};}
 function msg(t){document.getElementById('msg').textContent=t;}
-async function auto(){const s=document.getElementById('sport').value;msg('Claude maçları analiz ediyor...');try{const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fixtures',sport:s})});const d=await r.json();if(d.error){msg('⚠️ '+d.error);return;}matches=(d.matches||[]).map(m=>({id:uid++,auto:true,home:m.home,away:m.away,lh:m.model_lh,la:m.model_la,mkt:Object.fromEntries(m.markets.map(x=>[x.code,x.mkt])),odds:Object.fromEntries(m.markets.filter(x=>x.odds).map(x=>[x.code,x.odds])),pick:m.pick,source:m.source}));let note=d.form_count?(d.form_count+'/'+d.count+' maç form verisiyle'):'form verisi yok (piyasa-düzeltmeli)';msg(d.count+' maç · '+note);render();}catch(e){msg('Hata: '+e);}}
+async function auto(){const s=document.getElementById('sport').value;msg('BetFans maçları analiz ediyor...');try{const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fixtures',sport:s})});const d=await r.json();if(d.error){msg('⚠️ '+d.error);return;}matches=(d.matches||[]).map(m=>({id:uid++,auto:true,home:m.home,away:m.away,lh:m.model_lh,la:m.model_la,mkt:Object.fromEntries(m.markets.map(x=>[x.code,x.mkt])),odds:Object.fromEntries(m.markets.filter(x=>x.odds).map(x=>[x.code,x.odds])),pick:m.pick,source:m.source}));let note=d.form_count?(d.form_count+'/'+d.count+' maç form verisiyle'):'form verisi yok (piyasa-düzeltmeli)';msg(d.count+' maç · '+note);render();}catch(e){msg('Hata: '+e);}}
 function addMatch(){matches.push({id:uid++,auto:false,home:'',away:'',lh:1.3,la:1.1,mkt:{},odds:{}});render();}
 function del(id){matches=matches.filter(m=>m.id!=id);coupon=coupon.filter(c=>c.mid!=id);render();rc();}
 function upd(id,f,v){let m=matches.find(x=>x.id==id);if(f=='lh'||f=='la')m[f]=parseFloat(v)||0;else m[f]=v;rm(id);}
 function uo(id,k,v){let m=matches.find(x=>x.id==id);m.odds[k]=parseFloat(v)||0;rm(id);let c=coupon.find(c=>c.mid==id&&c.mk==k);if(c){c.odds=m.odds[k]||0;rc();}}
 function marketOf(m,k){if(m.mkt&&m.mkt[k]!=null)return m.mkt[k];if(m.odds[k])return +(100/m.odds[k]).toFixed(1);return null;}
-function render(){let e=document.getElementById('matches');if(!matches.length){e.innerHTML='<div class="empty" style="padding:40px 0">Maç yok. "Maçları otomatik getir" ile Claude analizini başlat, ya da elle ekle.</div>';return;}e.innerHTML=matches.map(m=>'<div class="match" id="m'+m.id+'"></div>').join('');matches.forEach(m=>rm(m.id));}
+function render(){let e=document.getElementById('matches');if(!matches.length){e.innerHTML='<div class="empty" style="padding:40px 0">Maç yok. "Maçları otomatik getir" ile BetFans analizini başlat, ya da elle ekle.</div>';return;}e.innerHTML=matches.map(m=>'<div class="match" id="m'+m.id+'"></div>').join('');matches.forEach(m=>rm(m.id));}
 function rm(id){const m=matches.find(x=>x.id==id),b=document.getElementById('m'+id);if(!b)return;const r=calc(m.lh,m.la),hn=m.home||'Ev',an=m.away||'Dep';
 const rows=Object.keys(MK).map(k=>{const mod=+(r[k]*100).toFixed(1),mkt=marketOf(m,k),edge=mkt!=null?+(mod-mkt).toFixed(1):null,od=m.odds[k]||0,val=edge!=null&&edge>=3,inc=coupon.some(c=>c.mid==id&&c.mk==k);
 const ec=edge==null?'':(edge>=3?'pos':(edge<=-3?'neg':'flat')),es=edge==null?'—':(edge>0?'+':'')+edge;
 return `<tr class="${val?'vrow':''}"><td>${MK[k]}${val?' <span class="dot" style="background:var(--good)"></span>':''}</td><td class="claude">${mod}%</td><td class="mkt">${mkt!=null?mkt+'%':'—'}</td><td class="edge ${ec}">${es}</td><td class="oc"><input type="number" step="0.01" value="${od||''}" placeholder="oran" oninput="uo(${id},'${k}',this.value)"></td><td><button class="ap ${inc?'in':''}" onclick="tp(${id},'${k}')">${inc?'✓':'+ Kupona'}</button></td></tr>`;}).join('');
 let pickHtml;
-if(m.auto){pickHtml=m.pick?`<div class="pick">⭐ Claude değer seçimi: <b>${m.pick.name}</b> · Claude ${m.pick.model}% vs Piyasa ${m.pick.mkt}% · fark +${m.pick.edge}%</div>`:`<div class="pick none">Bu maçta Claude piyasadan anlamlı bir fark görmüyor (değer yok).</div>`;}
-else{const best=Object.keys(MK).map(k=>{const mk=marketOf(m,k);return mk!=null?{k,edge:+(r[k]*100-mk).toFixed(1)}:null;}).filter(x=>x&&x.edge>=3).sort((a,b)=>b.edge-a.edge)[0];pickHtml=best?`<div class="pick">⭐ Değer: <b>${MK[best.k]}</b> · fark +${best.edge}%</div>`:`<div class="pick none">Oran gir → Claude % ile karşılaştırıp değer arasın.</div>`;}
+if(m.auto){pickHtml=m.pick?`<div class="pick">⭐ BetFans değer seçimi: <b>${m.pick.name}</b> · BetFans ${m.pick.model}% vs Piyasa ${m.pick.mkt}% · fark +${m.pick.edge}%</div>`:`<div class="pick none">Bu maçta BetFans piyasadan anlamlı bir fark görmüyor (değer yok).</div>`;}
+else{const best=Object.keys(MK).map(k=>{const mk=marketOf(m,k);return mk!=null?{k,edge:+(r[k]*100-mk).toFixed(1)}:null;}).filter(x=>x&&x.edge>=3).sort((a,b)=>b.edge-a.edge)[0];pickHtml=best?`<div class="pick">⭐ Değer: <b>${MK[best.k]}</b> · fark +${best.edge}%</div>`:`<div class="pick none">Oran gir → BetFans % ile karşılaştırıp değer arasın.</div>`;}
 const src=m.auto?(m.source==='form'?'<span class="src good">📊 Model: Form verisi (piyasadan bağımsız)</span>':'<span class="src">📈 Model: Piyasa-düzeltmeli (form verisi yok)</span>'):'<span class="src">✏️ Model: Elle girilen λ</span>';
-b.innerHTML=`<div class="mh"><input value="${m.home}" placeholder="Ev" oninput="upd(${id},'home',this.value)"><span>vs</span><input value="${m.away}" placeholder="Deplasman" oninput="upd(${id},'away',this.value)"><button class="b2 bm" onclick="del(${id})">✕</button></div><div class="lr"><div><label class="f">λ ${hn} (Claude)</label><input type="number" step="0.05" value="${m.lh}" oninput="upd(${id},'lh',this.value)"></div><div><label class="f">λ ${an} (Claude)</label><input type="number" step="0.05" value="${m.la}" oninput="upd(${id},'la',this.value)"></div></div>${src}${pickHtml}<table><thead><tr><th>Pazar</th><th>Claude</th><th>Piyasa</th><th>Fark</th><th>Oran</th><th></th></tr></thead><tbody>${rows}</tbody></table><div class="sc">Claude en olası skorlar: ${r.top.map(s=>s.s+' ('+(s.p*100).toFixed(0)+'%)').join(' · ')}</div>`;}
+b.innerHTML=`<div class="mh"><input value="${m.home}" placeholder="Ev" oninput="upd(${id},'home',this.value)"><span>vs</span><input value="${m.away}" placeholder="Deplasman" oninput="upd(${id},'away',this.value)"><button class="b2 bm" onclick="del(${id})">✕</button></div><div class="lr"><div><label class="f">λ ${hn} (BetFans)</label><input type="number" step="0.05" value="${m.lh}" oninput="upd(${id},'lh',this.value)"></div><div><label class="f">λ ${an} (BetFans)</label><input type="number" step="0.05" value="${m.la}" oninput="upd(${id},'la',this.value)"></div></div>${src}${pickHtml}<table><thead><tr><th>Pazar</th><th>BetFans</th><th>Piyasa</th><th>Fark</th><th>Oran</th><th></th></tr></thead><tbody>${rows}</tbody></table><div class="sc">BetFans en olası skorlar: ${r.top.map(s=>s.s+' ('+(s.p*100).toFixed(0)+'%)').join(' · ')}</div>`;}
 function tp(id,k){let i=coupon.findIndex(c=>c.mid==id&&c.mk==k);if(i>=0)coupon.splice(i,1);else{let m=matches.find(x=>x.id==id),r=calc(m.lh,m.la);coupon.push({mid:id,mk:k,label:(m.home||'Ev')+'-'+(m.away||'Dep')+' · '+MK[k],prob:r[k],odds:m.odds[k]||0});}rm(id);rc();}
 function clearC(){coupon=[];render();rc();}
-function rc(){let e=document.getElementById('picks');if(!coupon.length){e.innerHTML='<div class="empty">Seçim yok. Maçlardan "+ Kupona" ekle.</div>';['to','po','pf','cpb'].forEach(x=>document.getElementById(x).textContent='—');return;}e.innerHTML=coupon.map((c,i)=>'<div class="pk"><div>'+c.label+'<small>Claude '+(c.prob*100).toFixed(0)+'% · oran '+(c.odds?c.odds.toFixed(2):'—')+'</small></div><span class="x" onclick="rp('+i+')">✕</span></div>').join('');let st=parseFloat(document.getElementById('stake').value)||0,all=coupon.every(c=>c.odds>0),t=1,pr=1;coupon.forEach(c=>{t*=(c.odds||0);pr*=c.prob;});document.getElementById('to').textContent=all?t.toFixed(2):'oran gir';document.getElementById('po').textContent=all?(st*t).toFixed(0)+' TL':'—';document.getElementById('pf').textContent=all?'+'+(st*t-st).toFixed(0)+' TL':'—';document.getElementById('cpb').textContent='~'+(pr*100).toFixed(0)+'%';}
+function rc(){let e=document.getElementById('picks');if(!coupon.length){e.innerHTML='<div class="empty">Seçim yok. Maçlardan "+ Kupona" ekle.</div>';['to','po','pf','cpb'].forEach(x=>document.getElementById(x).textContent='—');return;}e.innerHTML=coupon.map((c,i)=>'<div class="pk"><div>'+c.label+'<small>BetFans '+(c.prob*100).toFixed(0)+'% · oran '+(c.odds?c.odds.toFixed(2):'—')+'</small></div><span class="x" onclick="rp('+i+')">✕</span></div>').join('');let st=parseFloat(document.getElementById('stake').value)||0,all=coupon.every(c=>c.odds>0),t=1,pr=1;coupon.forEach(c=>{t*=(c.odds||0);pr*=c.prob;});document.getElementById('to').textContent=all?t.toFixed(2):'oran gir';document.getElementById('po').textContent=all?(st*t).toFixed(0)+' TL':'—';document.getElementById('pf').textContent=all?'+'+(st*t-st).toFixed(0)+' TL':'—';document.getElementById('cpb').textContent='~'+(pr*100).toFixed(0)+'%';}
 function rp(i){coupon.splice(i,1);render();rc();}
 addMatch();
 </script></body></html>
