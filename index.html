@@ -1,35 +1,80 @@
 <!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Futbol Tahmin Aracı</title>
 <style>
-:root{--bg:#0f1419;--panel:#1a2129;--panel2:#222c36;--line:#2e3a46;--txt:#e6edf3;--muted:#8b9aa7;--accent:#3fb950;--accent2:#58a6ff;--bad:#f85149;--chip:#2d3742}
-*{box-sizing:border-box}body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--txt);font-size:14px;line-height:1.5}
-header{padding:18px 22px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#161d24,#0f1419)}
-h1{margin:0 0 3px;font-size:19px}.sub{color:var(--muted);font-size:12.5px}
-.disc{background:#3a2d12;border:1px solid #5c4a1a;color:#f0d68c;padding:7px 11px;border-radius:8px;font-size:11.5px;margin-top:10px}
-.wrap{max-width:1180px;margin:0 auto;padding:18px 22px;display:grid;grid-template-columns:1fr 350px;gap:18px}
+:root{
+  color-scheme:light;
+  --bg:#eef4fb;            /* ice blue page */
+  --panel:#ffffff;         /* cards */
+  --panel2:#f7fafd;        /* inputs / subtle */
+  --line:#e1e9f2;          /* borders */
+  --txt:#1f2d3d;           /* slate ink */
+  --muted:#6b7c8f;
+  --accent:#3b6fb0;        /* steel blue */
+  --accent-soft:#d6e6f7;
+  --good:#2e9e6b;          /* value / positive */
+  --good-soft:#e3f5ec;
+  --bad:#d9534f;
+  --chip:#eef3f9;
+  --shadow:0 1px 3px rgba(31,45,61,.06),0 6px 20px rgba(31,45,61,.06);
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--txt);font-size:14px;line-height:1.55}
+header{padding:26px 24px 22px;background:linear-gradient(135deg,#4a7fc0 0%,#3b6fb0 55%,#5a93cf 100%);color:#fff;box-shadow:var(--shadow)}
+header .inner{max-width:1180px;margin:0 auto}
+h1{margin:0 0 4px;font-size:22px;font-weight:800;letter-spacing:-.2px;display:flex;align-items:center;gap:9px}
+h1 .tag{font-weight:500;font-size:13px;opacity:.85}
+.sub{color:rgba(255,255,255,.9);font-size:13px;max-width:760px}
+.disc{display:inline-block;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.3);color:#fff;padding:7px 12px;border-radius:9px;font-size:12px;margin-top:13px;backdrop-filter:blur(2px)}
+.wrap{max-width:1180px;margin:22px auto;padding:0 24px;display:grid;grid-template-columns:1fr 360px;gap:20px}
 @media(max-width:900px){.wrap{grid-template-columns:1fr}}
-button{cursor:pointer;font-family:inherit;border:none;border-radius:7px;padding:8px 13px;font-size:13px;font-weight:600}
-.b1{background:var(--accent2);color:#06121f}.b2{background:var(--chip);color:var(--txt);border:1px solid var(--line)}.bm{padding:4px 9px;font-size:11.5px}
-.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-select,input{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:7px 9px;font-size:13px;font-family:inherit}
-.match{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px;margin-bottom:14px}
-.mh{display:flex;gap:8px;align-items:center;margin-bottom:10px}.mh input{flex:1;min-width:0}
-.lr{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}.lr input{width:100%}
-label.f{display:block;font-size:11px;color:var(--muted);margin:0 0 3px}
-table{width:100%;border-collapse:collapse;margin-top:4px}th{text-align:left;font-size:10px;color:var(--muted);padding:5px;border-bottom:1px solid var(--line);text-transform:uppercase}
-td{padding:5px;border-bottom:1px solid #232c35;font-size:12.5px}.pb{font-weight:700}
-.v{font-size:10px;padding:2px 7px;border-radius:20px;font-weight:700}.v.y{background:rgba(63,185,80,.16);color:var(--accent)}.v.n{background:#2a323b;color:var(--muted)}
-.oc input{width:70px;padding:4px 6px}.ap{background:var(--chip);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:4px 8px;font-size:11px}.ap.in{background:var(--accent);color:#06210d}
-.sc{font-size:11px;color:var(--muted);margin-top:8px}.hint{font-size:11px;color:var(--muted);margin:2px 0 8px}
-aside{position:sticky;top:14px;align-self:start}.cp{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px}
-.pk{display:flex;justify-content:space-between;gap:8px;padding:7px;background:var(--panel2);border-radius:7px;margin-bottom:6px;font-size:12px}.pk .x{color:var(--bad);cursor:pointer;font-weight:700}.pk small{color:var(--muted);display:block}
-.empty{color:var(--muted);text-align:center;padding:18px 0;font-size:12.5px}
-.tot{border-top:1px solid var(--line);margin-top:10px;padding-top:10px}.tl{display:flex;justify-content:space-between;margin-bottom:6px;font-size:13px}
-.big{color:var(--accent);font-size:20px;font-weight:800}.st{display:flex;gap:8px;align-items:center;margin:10px 0}.st input{width:85px}
-#msg{font-size:12px;color:var(--muted);margin-left:6px}
+button{cursor:pointer;font-family:inherit;border:none;border-radius:9px;padding:9px 15px;font-size:13px;font-weight:600;transition:.15s}
+.b1{background:var(--accent);color:#fff;box-shadow:0 2px 8px rgba(59,111,176,.28)}
+.b1:hover{background:#33639c;transform:translateY(-1px)}
+.b2{background:#fff;color:var(--accent);border:1px solid var(--line)}
+.b2:hover{background:var(--panel2);border-color:#cfddec}
+.bm{padding:6px 11px;font-size:12px}
+.bar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:18px;background:var(--panel);padding:12px;border-radius:12px;border:1px solid var(--line);box-shadow:var(--shadow)}
+select,input{background:#fff;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 11px;font-size:13px;font-family:inherit;transition:.15s}
+select:focus,input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.match{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
+.mh{display:flex;gap:9px;align-items:center;margin-bottom:12px}.mh input{flex:1;min-width:0;font-weight:600}
+.mh span{color:var(--muted);font-size:12px;font-weight:600}
+.lr{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-bottom:9px}.lr input{width:100%}
+label.f{display:block;font-size:11px;color:var(--muted);margin:0 0 4px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+table{width:100%;border-collapse:collapse;margin-top:6px}
+th{text-align:left;font-size:10px;color:var(--muted);padding:7px 8px;border-bottom:2px solid var(--line);text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+td{padding:8px;border-bottom:1px solid #eef3f8;font-size:13px}
+tr:last-child td{border-bottom:none}
+.pb{font-weight:700;color:var(--accent)}
+.v{font-size:10px;padding:3px 9px;border-radius:30px;font-weight:700;letter-spacing:.3px}
+.v.y{background:var(--good-soft);color:var(--good)}
+.v.n{background:var(--chip);color:var(--muted)}
+.oc input{width:74px;padding:6px 8px}
+.ap{background:var(--chip);border:1px solid var(--line);color:var(--accent);border-radius:8px;padding:5px 10px;font-size:11px;font-weight:600;transition:.15s}
+.ap:hover{background:var(--accent-soft)}
+.ap.in{background:var(--good);color:#fff;border-color:var(--good)}
+.sc{font-size:11.5px;color:var(--muted);margin-top:11px;padding-top:9px;border-top:1px dashed var(--line)}
+.hint{font-size:11.5px;color:var(--muted);margin:4px 0 10px}
+aside{position:sticky;top:18px;align-self:start}
+.cp{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;box-shadow:var(--shadow)}
+.cp-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.cp-h b{font-size:15px}
+.pk{display:flex;justify-content:space-between;gap:8px;padding:10px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;margin-bottom:8px;font-size:12.5px}
+.pk .x{color:var(--bad);cursor:pointer;font-weight:700;font-size:14px}
+.pk small{color:var(--muted);display:block;margin-top:2px}
+.empty{color:var(--muted);text-align:center;padding:22px 10px;font-size:12.5px;background:var(--panel2);border-radius:10px;border:1px dashed var(--line)}
+.st{display:flex;gap:9px;align-items:center;margin:14px 0}.st input{width:96px}
+.tot{border-top:1px solid var(--line);margin-top:12px;padding-top:14px}
+.tl{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px;font-size:13px}
+.tl span{color:var(--muted)}
+.big{color:var(--good);font-size:22px;font-weight:800}
+#msg{font-size:12px;color:rgba(255,255,255,.95);margin-left:4px;font-weight:500}
+.bar #msg{color:var(--muted)}
 </style></head><body>
-<header><h1>⚽ Futbol Tahmin Aracı <span style="font-weight:400;color:var(--muted);font-size:13px">· Poisson + Canlı Oran</span></h1>
+<header><div class="inner">
+<h1>⚽ Futbol Tahmin Aracı <span class="tag">· Poisson + Canlı Oran</span></h1>
 <div class="sub">Maçları otomatik getir ya da elle gir; model 1X2 / Alt-Üst 2.5 / KG olasılıklarını hesaplar, değer arar, kupon kurar.</div>
-<div class="disc">⚠️ İstatistiksel tahmin, garanti değildir. Sorumlu oyna, kaybetmeyi göze alamayacağın parayla oynama.</div></header>
+<div class="disc">⚠️ İstatistiksel tahmin, garanti değildir. Sorumlu oyna, kaybetmeyi göze alamayacağın parayla oynama.</div>
+</div></header>
 <div class="wrap"><main>
 <div class="bar">
   <select id="sport">
@@ -46,14 +91,14 @@ aside{position:sticky;top:14px;align-self:start}.cp{background:var(--panel);bord
 <div id="matches"></div>
 </main>
 <aside><div class="cp">
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>🎟️ Kupon</b><button class="b2 bm" onclick="clearC()">Temizle</button></div>
+<div class="cp-h"><b>🎟️ Kupon</b><button class="b2 bm" onclick="clearC()">Temizle</button></div>
 <div id="picks"><div class="empty">Seçim yok. Maçlardan "+ Kupona" ekle.</div></div>
 <div class="st"><label class="f" style="margin:0">Yatırım (TL)</label><input id="stake" type="number" value="100" oninput="rc()"></div>
 <div class="tot"><div class="tl"><span>Toplam oran</span><b id="to">—</b></div>
 <div class="tl"><span>Olası dönüş</span><span class="big" id="po">—</span></div>
-<div class="tl"><span>Net kazanç</span><b id="pf" style="color:var(--accent2)">—</b></div>
-<div class="tl"><span style="font-size:11px;color:var(--muted)">Model tutma şansı*</span><span style="font-size:11px;color:var(--muted)" id="cp">—</span></div></div>
-<div class="hint" style="margin-top:8px">*Model olasılıklarının çarpımı. Ayak arttıkça kazanç↑ tutma şansı↓.</div>
+<div class="tl"><span>Net kazanç</span><b id="pf" style="color:var(--accent)">—</b></div>
+<div class="tl"><span style="font-size:11px">Model tutma şansı*</span><span style="font-size:11px;color:var(--muted)" id="cp">—</span></div></div>
+<div class="hint" style="margin-top:10px">*Model olasılıklarının çarpımı. Ayak arttıkça kazanç↑ tutma şansı↓.</div>
 </div></aside></div>
 <script>
 const API="https://wrmyxcittludopbjyits.supabase.co/functions/v1/bahis-tahmin"; const MK={"1":"MS 1 (Ev)","X":"Beraberlik","2":"MS 2 (Dep)","O":"Üst 2.5","U":"Alt 2.5","BY":"KG Var","BN":"KG Yok"};
@@ -66,10 +111,10 @@ function addMatch(){matches.push({id:uid++,home:'',away:'',lh:1.3,la:1.1,odds:{}
 function del(id){matches=matches.filter(m=>m.id!=id);coupon=coupon.filter(c=>c.mid!=id);render();rc();}
 function upd(id,f,v){let m=matches.find(x=>x.id==id);if(f=='lh'||f=='la')m[f]=parseFloat(v)||0;else m[f]=v;rm(id);}
 function uo(id,k,v){let m=matches.find(x=>x.id==id);m.odds[k]=parseFloat(v)||0;rm(id);let c=coupon.find(c=>c.mid==id&&c.mk==k);if(c){c.odds=m.odds[k]||0;rc();}}
-function render(){let e=document.getElementById('matches');if(!matches.length){e.innerHTML='<div class="empty" style="padding:36px 0">Maç yok. Otomatik getir ya da elle ekle.</div>';return;}e.innerHTML=matches.map(m=>'<div class="match" id="m'+m.id+'"></div>').join('');matches.forEach(m=>rm(m.id));}
+function render(){let e=document.getElementById('matches');if(!matches.length){e.innerHTML='<div class="empty" style="padding:40px 0">Maç yok. Otomatik getir ya da elle ekle.</div>';return;}e.innerHTML=matches.map(m=>'<div class="match" id="m'+m.id+'"></div>').join('');matches.forEach(m=>rm(m.id));}
 function rm(id){let m=matches.find(x=>x.id==id),b=document.getElementById('m'+id);if(!b)return;let r=calc(m.lh,m.la),hn=m.home||'Ev',an=m.away||'Dep';
 let rows=Object.keys(MK).map(k=>{let p=r[k],od=m.odds[k]||0,fair=p>0?(1/p).toFixed(2):'—',val=od>0&&p>1/od,inc=coupon.some(c=>c.mid==id&&c.mk==k);return '<tr><td>'+MK[k]+'</td><td class="pb">'+(p*100).toFixed(1)+'%</td><td style="color:var(--muted)">'+fair+'</td><td class="oc"><input type="number" step="0.01" value="'+(od||'')+'" placeholder="oran" oninput="uo('+id+",'"+k+"',this.value)\"></td><td>"+(od>0?'<span class="v '+(val?'y':'n')+'">'+(val?'DEĞER':'—')+'</span>':'')+'</td><td><button class="ap '+(inc?'in':'')+'" onclick="tp('+id+",'"+k+"')\">"+(inc?'✓':'+ Kupona')+'</button></td></tr>';}).join('');
-b.innerHTML='<div class="mh"><input value="'+m.home+'" placeholder="Ev" oninput="upd('+id+",'home',this.value)\"><span style=\"color:var(--muted)\">vs</span><input value=\""+m.away+'" placeholder="Deplasman" oninput="upd('+id+",'away',this.value)\"><button class=\"b2 bm\" onclick=\"del("+id+')">✕</button></div><div class="lr"><div><label class="f">λ '+hn+'</label><input type="number" step="0.05" value="'+m.lh+'" oninput="upd('+id+",'lh',this.value)\"></div><div><label class=\"f\">λ "+an+'</label><input type="number" step="0.05" value="'+m.la+'" oninput="upd('+id+",'la',this.value)\"></div></div><div class=\"hint\">Toplam beklenen gol: <b>"+(m.lh+m.la).toFixed(2)+'</b></div><table><thead><tr><th>Pazar</th><th>Model</th><th>Adil</th><th>Oran</th><th>Değer</th><th></th></tr></thead><tbody>'+rows+'</tbody></table><div class="sc">Olası skorlar: '+r.top.map(s=>s.s+' ('+(s.p*100).toFixed(0)+'%)').join(' · ')+'</div>';}
+b.innerHTML='<div class="mh"><input value="'+m.home+'" placeholder="Ev" oninput="upd('+id+",'home',this.value)\"><span>vs</span><input value=\""+m.away+'" placeholder="Deplasman" oninput="upd('+id+",'away',this.value)\"><button class=\"b2 bm\" onclick=\"del("+id+')">✕</button></div><div class="lr"><div><label class="f">λ '+hn+'</label><input type="number" step="0.05" value="'+m.lh+'" oninput="upd('+id+",'lh',this.value)\"></div><div><label class=\"f\">λ "+an+'</label><input type="number" step="0.05" value="'+m.la+'" oninput="upd('+id+",'la',this.value)\"></div></div><div class=\"hint\">Toplam beklenen gol: <b>"+(m.lh+m.la).toFixed(2)+'</b></div><table><thead><tr><th>Pazar</th><th>Model</th><th>Adil</th><th>Oran</th><th>Değer</th><th></th></tr></thead><tbody>'+rows+'</tbody></table><div class="sc">Olası skorlar: '+r.top.map(s=>s.s+' ('+(s.p*100).toFixed(0)+'%)').join(' · ')+'</div>';}
 function tp(id,k){let i=coupon.findIndex(c=>c.mid==id&&c.mk==k);if(i>=0)coupon.splice(i,1);else{let m=matches.find(x=>x.id==id),r=calc(m.lh,m.la);coupon.push({mid:id,mk:k,label:(m.home||'Ev')+'-'+(m.away||'Dep')+' · '+MK[k],prob:r[k],odds:m.odds[k]||0});}rm(id);rc();}
 function clearC(){coupon=[];render();rc();}
 function rc(){let e=document.getElementById('picks');if(!coupon.length){e.innerHTML='<div class="empty">Seçim yok. Maçlardan "+ Kupona" ekle.</div>';['to','po','pf','cp'].forEach(x=>document.getElementById(x).textContent='—');return;}e.innerHTML=coupon.map((c,i)=>'<div class="pk"><div>'+c.label+'<small>model '+(c.prob*100).toFixed(0)+'% · oran '+(c.odds?c.odds.toFixed(2):'—')+'</small></div><span class="x" onclick="rp('+i+')">✕</span></div>').join('');let st=parseFloat(document.getElementById('stake').value)||0,all=coupon.every(c=>c.odds>0),t=1,pr=1;coupon.forEach(c=>{t*=(c.odds||0);pr*=c.prob;});document.getElementById('to').textContent=all?t.toFixed(2):'oran gir';document.getElementById('po').textContent=all?(st*t).toFixed(0)+' TL':'—';document.getElementById('pf').textContent=all?'+'+(st*t-st).toFixed(0)+' TL':'—';document.getElementById('cp').textContent='~'+(pr*100).toFixed(0)+'%';}
