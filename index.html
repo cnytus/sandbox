@@ -163,8 +163,8 @@ function legCandidates(){const out=[];matches.filter(m=>m.auto).forEach(m=>{cons
 function onePerMatch(cands,filter,score){const by={};cands.filter(filter).forEach(l=>{if(!by[l.mid]||score(l)>score(by[l.mid]))by[l.mid]=l;});return Object.values(by).sort((a,b)=>score(b)-score(a));}
 function buildCoupons(){const all=legCandidates();
  const g=onePerMatch(all,l=>l.model>=0.55&&l.odds<=1.9,l=>l.model).slice(0,3);
- let b=onePerMatch(all,l=>l.odds>=1.5&&l.odds<=2.7,l=>l.model+l.edge/100).slice(0,4);
- if(b.length<2)b=onePerMatch(all,l=>l.model>=0.4&&l.model<=0.62,l=>l.model).slice(0,4);
+ let b=onePerMatch(all,l=>l.odds>=1.5&&l.odds<=2.7,l=>l.model+l.edge/100).slice(0,3);
+ if(b.length<2)b=onePerMatch(all,l=>l.model>=0.4&&l.model<=0.62,l=>l.model).slice(0,3);
  let s=onePerMatch(all,l=>l.edge>=4&&l.odds>=2.0,l=>l.edge).slice(0,3);
  if(s.length<2)s=onePerMatch(all,l=>l.odds>=2.4,l=>l.odds).slice(0,3);
  return{g,b,s};}
