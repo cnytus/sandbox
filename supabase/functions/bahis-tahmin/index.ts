@@ -28,13 +28,23 @@ const WORLD_CUP_SPORT="soccer_fifa_world_cup";
 // ---------- core Poisson / Dixon-Coles model ----------
 function poisson(k,l){ let f=1; for(let i=2;i<=k;i++) f*=i; return Math.exp(-l)*Math.pow(l,k)/f; }
 function dc(i,j,lh,la,rho){ if(i===0&&j===0)return 1-lh*la*rho; if(i===0&&j===1)return 1+lh*rho; if(i===1&&j===0)return 1+la*rho; if(i===1&&j===1)return 1-rho; return 1; }
-function probs(lh,la,rho){ const mx=10; const cells=[]; let tot=0;
+function probs(lh,la,rho){ const mx=8; const cells=[]; let tot=0;
   for(let i=0;i<mx;i++) for(let j=0;j<mx;j++){ let p=poisson(i,lh)*poisson(j,la); if(i<2&&j<2)p*=dc(i,j,lh,la,rho); cells.push({i,j,p}); tot+=p; }
   let ph=0,pd=0,pa=0,o=0,by=0; const grid=[];
   for(const c of cells){ const p=c.p/tot; if(c.i>c.j)ph+=p; else if(c.i===c.j)pd+=p; else pa+=p; if(c.i+c.j>2.5)o+=p; if(c.i>=1&&c.j>=1)by+=p; grid.push({s:c.i+"-"+c.j,p}); }
   grid.sort((a,b)=>b.p-a.p); return { "1":ph,"X":pd,"2":pa,"O":o,"U":1-o,"BY":by,"BN":1-by, top:grid.slice(0,4) }; }
-function estimateLambdas(pH,pA,pOver,rho){ let best={lh:1.3,la:1.1,err:1e9};
-  for(let lh=0.2;lh<=3.6;lh+=0.05) for(let la=0.2;la<=3.6;la+=0.05){ const r=probs(lh,la,rho); let err=Math.pow(r["1"]-pH,2)+Math.pow(r["2"]-pA,2); if(pOver!=null) err+=Math.pow(r["O"]-pOver,2); if(err<best.err) best={lh,la,err}; }
+// Coarse-to-fine grid search (was a flat 0.05-step grid = ~4.7k probs() evaluations per call; that,
+// plus a *second* full search inside eloLambdas() for every World Cup match, was blowing the edge
+// function's CPU budget - WORKER_RESOURCE_LIMIT 546s - once enough concurrent WC fixtures were on
+// the odds feed). Coarse pass finds the neighborhood cheaply, fine pass refines locally around it:
+// ~5x fewer probs() calls for essentially the same precision.
+function estimateLambdas(pH,pA,pOver,rho){
+  const err=(lh,la)=>{ const r=probs(lh,la,rho); let e=Math.pow(r["1"]-pH,2)+Math.pow(r["2"]-pA,2); if(pOver!=null) e+=Math.pow(r["O"]-pOver,2); return e; };
+  let best={lh:1.3,la:1.1,err:1e9};
+  for(let lh=0.2;lh<=3.6;lh+=0.2) for(let la=0.2;la<=3.6;la+=0.2){ const e=err(lh,la); if(e<best.err) best={lh,la,err:e}; }
+  const loLh=Math.max(0.05,best.lh-0.25), hiLh=Math.min(4.0,best.lh+0.25);
+  const loLa=Math.max(0.05,best.la-0.25), hiLa=Math.min(4.0,best.la+0.25);
+  for(let lh=loLh;lh<=hiLh;lh+=0.02) for(let la=loLa;la<=hiLa;la+=0.02){ const e=err(lh,la); if(e<best.err) best={lh,la,err:e}; }
   return best; }
 function marketAdj(lh,la){ const mu=lh+la,diff=lh-la; return { lh:Math.max(0.05,(mu*0.9+2.6*0.1+diff*0.82)/2), la:Math.max(0.05,(mu*0.9+2.6*0.1-diff*0.82)/2) }; }
 
