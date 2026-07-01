@@ -36,6 +36,8 @@ label.f{display:block;font-size:11px;color:var(--muted);margin:0 0 4px;font-weig
 .src.good{color:#1d7a51;background:var(--good-soft);border-color:#bfe6d2}
 .pick{background:var(--good-soft);border:1px solid #bfe6d2;color:#1d7a51;border-radius:10px;padding:8px 12px;font-size:12.5px;margin:6px 0 10px;font-weight:600}
 .pick.none{background:var(--panel2);border-color:var(--line);color:var(--muted);font-weight:500}
+.pick.pred{background:var(--accent-soft);border-color:#bcd7f2;color:#28527e}
+.prow{background:var(--accent-soft)}
 table{width:100%;border-collapse:collapse;margin-top:4px}
 th{text-align:left;font-size:10px;color:var(--muted);padding:7px 8px;border-bottom:2px solid var(--line);text-transform:uppercase;letter-spacing:.4px;font-weight:700}
 [dir=rtl] th{text-align:right}
@@ -168,6 +170,7 @@ Object.assign(T.tr,{navMain:'Tahminler',navHist:'Geçmiş Tahminler',histAll:'T�
 Object.assign(T.en,{navMain:'Predictions',navHist:'Past Predictions',histAll:'All leagues',histAcc:'Accuracy',histNone:'No saved predictions yet. Pick a league and press "Fetch matches automatically".'});
 Object.assign(T.de,{navMain:'Vorhersagen',navHist:'Frühere Tipps',histAll:'Alle Ligen',histAcc:'Trefferquote',histNone:'Noch keine gespeicherten Tipps. Wähle eine Liga und drücke "Spiele automatisch laden".'});
 Object.assign(T.ar,{navMain:'التوقعات',navHist:'التوقعات السابقة',histAll:'كل الدوريات',histAcc:'الدقة',histNone:'لا توجد توقعات محفوظة بعد. اختر دورياً واضغط "جلب المباريات تلقائياً".'});
+Object.assign(T.tr,{predPrefix:'BetFans tahmini:'});Object.assign(T.en,{predPrefix:'BetFans prediction:'});Object.assign(T.de,{predPrefix:'BetFans-Tipp:'});Object.assign(T.ar,{predPrefix:'توقّع BetFans:'});
 let lang='tr'; try{const sv=localStorage.getItem('lang'); if(sv&&T[sv])lang=sv;}catch(e){}
 function t(k){return (T[lang]&&T[lang][k]!=null)?T[lang][k]:T.tr[k];}
 function mkn(c){return (MKT[lang]&&MKT[lang][c])||MKT.tr[c];}
@@ -189,13 +192,21 @@ function uo(id,k,v){let m=matches.find(x=>x.id==id);m.odds[k]=parseFloat(v)||0;r
 function onStake(){renderAutoCoupons();}
 function marketOf(m,k){if(m.mkt&&m.mkt[k]!=null)return m.mkt[k];if(m.odds[k])return +(100/m.odds[k]).toFixed(1);return null;}
 function render(){let e=document.getElementById('matches');if(!matches.length){e.innerHTML=`<div class="empty" style="padding:40px 0">${t('emptyMatches')}</div>`;return;}e.innerHTML=matches.map(m=>'<div class="match" id="m'+m.id+'"></div>').join('');matches.forEach(m=>rm(m.id));}
+function betfansPred(m,r){
+ if(m.auto&&m.pick)return {code:m.pick.code,model:m.pick.model,mkt:m.pick.mkt,edge:m.pick.edge,value:true};
+ const bv=CODES.map(k=>{const mk=marketOf(m,k);return mk!=null?{k,edge:+(r[k]*100-mk).toFixed(1),mk}:null;}).filter(x=>x&&x.edge>=5).sort((a,b)=>b.edge-a.edge)[0];
+ if(bv)return {code:bv.k,model:+(r[bv.k]*100).toFixed(1),mkt:bv.mk,edge:bv.edge,value:true};
+ const arr=CODES.map(k=>({k,p:r[k],od:m.odds[k]||0}));const w=arr.filter(x=>x.od>0);const pool=w.length?w:arr;pool.sort((a,b)=>b.p-a.p);const top=pool[0];
+ return {code:top.k,model:+(top.p*100).toFixed(1),odds:top.od||null,value:false};}
 function rm(id){const m=matches.find(x=>x.id==id),b=document.getElementById('m'+id);if(!b)return;const r=calc(m.lh,m.la),hn=m.home||t('home'),an=m.away||t('away');
-const rows=CODES.map(k=>{const mod=+(r[k]*100).toFixed(1),mkt=marketOf(m,k),edge=mkt!=null?+(mod-mkt).toFixed(1):null,od=m.odds[k]||0,val=edge!=null&&edge>=5;
+const pred=betfansPred(m,r),predCode=pred.code,isVP=pred.value;
+const rows=CODES.map(k=>{const mod=+(r[k]*100).toFixed(1),mkt=marketOf(m,k),edge=mkt!=null?+(mod-mkt).toFixed(1):null,od=m.odds[k]||0,val=edge!=null&&edge>=5,isP=k===predCode;
 const ec=edge==null?'':(edge>=5?'pos':(edge<=-5?'neg':'flat')),es=edge==null?'—':(edge>0?'+':'')+edge;
-return `<tr class="${val?'vrow':''}"><td>${mkn(k)}${val?' <span class="dot" style="background:var(--good)"></span>':''}</td><td class="claudecol">${mod}%</td><td class="mkt">${mkt!=null?mkt+'%':'—'}</td><td class="edge ${ec}">${es}</td><td class="oc"><input type="number" step="0.01" value="${od||''}" placeholder="${t('oddPh')}" oninput="uo(${id},'${k}',this.value)"></td></tr>`;}).join('');
+const mark=isP?(isVP?'⭐ ':'🎯 '):'';
+return `<tr class="${val?'vrow':(isP?'prow':'')}"><td>${mark}${mkn(k)}${val?' <span class="dot" style="background:var(--good)"></span>':''}</td><td class="claudecol">${mod}%</td><td class="mkt">${mkt!=null?mkt+'%':'—'}</td><td class="edge ${ec}">${es}</td><td class="oc"><input type="number" step="0.01" value="${od||''}" placeholder="${t('oddPh')}" oninput="uo(${id},'${k}',this.value)"></td></tr>`;}).join('');
 let pickHtml;
-if(m.auto){pickHtml=m.pick?`<div class="pick">${t('pickPrefix')} <b>${mkn(m.pick.code)}</b> · BetFans ${m.pick.model}% ${t('vsMarket')} ${m.pick.mkt}% · ${t('diffWord')} +${m.pick.edge}%</div>`:`<div class="pick none">${t('noValue')}</div>`;}
-else{const best=CODES.map(k=>{const mk=marketOf(m,k);return mk!=null?{k,edge:+(r[k]*100-mk).toFixed(1)}:null;}).filter(x=>x&&x.edge>=5).sort((a,b)=>b.edge-a.edge)[0];pickHtml=best?`<div class="pick">⭐ ${t('manualValueLbl')} <b>${mkn(best.k)}</b> · ${t('diffWord')} +${best.edge}%</div>`:`<div class="pick none">${t('manualHint')}</div>`;}
+if(pred.value){pickHtml=`<div class="pick">${t('pickPrefix')} <b>${mkn(pred.code)}</b> · BetFans ${pred.model}%${pred.mkt!=null?` ${t('vsMarket')} ${pred.mkt}%`:''} · ${t('diffWord')} +${pred.edge}%</div>`;}
+else{pickHtml=`<div class="pick pred">🎯 ${t('predPrefix')} <b>${mkn(pred.code)}</b> · ${pred.model}%${pred.odds?` · ${t('colOdds')} ${(+pred.odds).toFixed(2)}`:''}</div>`;}
 const src=m.auto?(m.source==='form'?`<span class="src good">${t('srcForm')}</span>`:`<span class="src">${t('srcMarket')}</span>`):`<span class="src">${t('srcManual')}</span>`;
 b.innerHTML=`<div class="mh"><input value="${m.home}" placeholder="${t('home')}" oninput="upd(${id},'home',this.value)"><span>${t('vs')}</span><input value="${m.away}" placeholder="${t('away')}" oninput="upd(${id},'away',this.value)"><button class="b2 bm" onclick="del(${id})">✕</button></div><div class="lr"><div><label class="f">λ ${hn} (BetFans)</label><input type="number" step="0.05" value="${m.lh}" oninput="upd(${id},'lh',this.value)"></div><div><label class="f">λ ${an} (BetFans)</label><input type="number" step="0.05" value="${m.la}" oninput="upd(${id},'la',this.value)"></div></div>${src}${pickHtml}<table><thead><tr><th>${t('colBet')}</th><th>BetFans</th><th>${t('colMarket')}</th><th>${t('colDiff')}</th><th>${t('colOdds')}</th></tr></thead><tbody>${rows}</tbody></table><div class="sc">${t('topScores')} ${r.top.map(s=>s.s+' ('+(s.p*100).toFixed(0)+'%)').join(' · ')}</div>`;}
 // ---- BetFans kuponları ----
