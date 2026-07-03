@@ -185,7 +185,7 @@ function calc(lh,la){const rho=-0.12;let cells=[],tot=0;for(let i=0;i<10;i++)for
 function msg(x){document.getElementById('msg').textContent=x;}
 function stakeVal(){const v=parseFloat(document.getElementById('stake').value);return v>0?v:100;}
 async function auto(){const s=document.getElementById('sport').value;msg(t('msgAnalyzing'));try{const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fixtures',sport:s})});const d=await r.json();if(d.error){msg('⚠️ '+d.error);return;}lastParamsVersion=d.params_version||null;lastEdgeThresholdPct=d.edge_threshold_pct||5;matches=(d.matches||[]).map(m=>({id:uid++,auto:true,home:m.home,away:m.away,lh:m.model_lh,la:m.model_la,commence:m.commence,mkt:Object.fromEntries(m.markets.map(x=>[x.code,x.mkt])),odds:Object.fromEntries(m.markets.filter(x=>x.odds).map(x=>[x.code,x.odds])),pick:m.pick,source:m.source}));let mw=(lang==='en'?' matches':lang==='de'?' Spiele':lang==='ar'?' مباراة':' maç');let note=d.form_count?(d.form_count+'/'+d.count+(lang==='tr'?' maç form verisiyle':lang==='en'?' matches with form data':lang==='de'?' Spiele mit Formdaten':' مباراة ببيانات الأداء')):t('msgNoForm');msg(d.count+mw+' · '+note+' · v'+lastParamsVersion+' · edge≥'+lastEdgeThresholdPct+'%');render();acIndex=0;renderAutoCoupons();savePicks(s);settleThenHistory(s);}catch(e){msg(t('msgError')+e);}}
-function onSport(){refreshHistory(document.getElementById('sport').value);}
+function onSport(){auto();} // v8.1: switching sport re-fetches matches (auto() also settles + refreshes history)
 function addMatch(){matches.push({id:uid++,auto:false,home:'',away:'',lh:1.3,la:1.1,mkt:{},odds:{}});render();}
 function del(id){matches=matches.filter(m=>m.id!=id);render();renderAutoCoupons();}
 function upd(id,f,v){let m=matches.find(x=>x.id==id);if(f=='lh'||f=='la')m[f]=parseFloat(v)||0;else m[f]=v;rm(id);renderAutoCoupons();}
@@ -194,7 +194,7 @@ function onStake(){renderAutoCoupons();}
 function marketOf(m,k){if(m.mkt&&m.mkt[k]!=null)return m.mkt[k];if(m.odds[k])return +(100/m.odds[k]).toFixed(1);return null;}
 function render(){let e=document.getElementById('matches');if(!matches.length){e.innerHTML=`<div class="empty" style="padding:40px 0">${t('emptyMatches')}</div>`;return;}e.innerHTML=matches.map(m=>'<div class="match" id="m'+m.id+'"></div>').join('');matches.forEach(m=>rm(m.id));}
 function betfansPred(m,r){
- if(m.auto&&m.pick)return {code:m.pick.code,model:m.pick.model,mkt:m.pick.mkt,edge:m.pick.edge,value:true};
+ if(m.auto&&m.pick)return {code:m.pick.code,model:m.pick.model,mkt:m.pick.mkt,edge:m.pick.edge,kelly_pct:m.pick.kelly_pct,value:true};
  const bv=CODES.map(k=>{const mk=marketOf(m,k);return mk!=null?{k,edge:+(r[k]*100-mk).toFixed(1),mk}:null;}).filter(x=>x&&x.edge>=5).sort((a,b)=>b.edge-a.edge)[0];
  if(bv)return {code:bv.k,model:+(r[bv.k]*100).toFixed(1),mkt:bv.mk,edge:bv.edge,value:true};
  const arr=CODES.map(k=>({k,p:r[k],od:m.odds[k]||0}));const w=arr.filter(x=>x.od>0);const pool=w.length?w:arr;pool.sort((a,b)=>b.p-a.p);const top=pool[0];
@@ -206,7 +206,7 @@ const ec=edge==null?'':(edge>=5?'pos':(edge<=-5?'neg':'flat')),es=edge==null?'�
 const mark=isP?(isVP?'⭐ ':'🎯 '):'';
 return `<tr class="${val?'vrow':(isP?'prow':'')}"><td>${mark}${mkn(k)}${val?' <span class="dot" style="background:var(--good)"></span>':''}</td><td class="claudecol">${mod}%</td><td class="mkt">${mkt!=null?mkt+'%':'—'}</td><td class="edge ${ec}">${es}</td><td class="oc"><input type="number" step="0.01" value="${od||''}" placeholder="${t('oddPh')}" oninput="uo(${id},'${k}',this.value)"></td></tr>`;}).join('');
 let pickHtml;
-if(pred.value){pickHtml=`<div class="pick">${t('pickPrefix')} <b>${mkn(pred.code)}</b> · BetFans ${pred.model}%${pred.mkt!=null?` ${t('vsMarket')} ${pred.mkt}%`:''} · ${t('diffWord')} +${pred.edge}%</div>`;}
+if(pred.value){pickHtml=`<div class="pick">${t('pickPrefix')} <b>${mkn(pred.code)}</b> · BetFans ${pred.model}%${pred.mkt!=null?` ${t('vsMarket')} ${pred.mkt}%`:''} · ${t('diffWord')} +${pred.edge}%${pred.kelly_pct?` · Kelly %${pred.kelly_pct}`:''}</div>`;}
 else{pickHtml=`<div class="pick pred">🎯 ${t('predPrefix')} <b>${mkn(pred.code)}</b> · ${pred.model}%${pred.odds?` · ${t('colOdds')} ${(+pred.odds).toFixed(2)}`:''}</div>`;}
 const src=m.auto?(m.source==='form'?`<span class="src good">${t('srcForm')}</span>`:`<span class="src">${t('srcMarket')}</span>`):`<span class="src">${t('srcManual')}</span>`;
 b.innerHTML=`<div class="mh"><input value="${m.home}" placeholder="${t('home')}" oninput="upd(${id},'home',this.value)"><span>${t('vs')}</span><input value="${m.away}" placeholder="${t('away')}" oninput="upd(${id},'away',this.value)"><button class="b2 bm" onclick="del(${id})">✕</button></div><div class="lr"><div><label class="f">λ ${hn} (BetFans)</label><input type="number" step="0.05" value="${m.lh}" oninput="upd(${id},'lh',this.value)"></div><div><label class="f">λ ${an} (BetFans)</label><input type="number" step="0.05" value="${m.la}" oninput="upd(${id},'la',this.value)"></div></div>${src}${pickHtml}<table><thead><tr><th>${t('colBet')}</th><th>BetFans</th><th>${t('colMarket')}</th><th>${t('colDiff')}</th><th>${t('colOdds')}</th></tr></thead><tbody>${rows}</tbody></table><div class="sc">${t('topScores')} ${r.top.map(s=>s.s+' ('+(s.p*100).toFixed(0)+'%)').join(' · ')}</div>`;}
@@ -241,5 +241,10 @@ function renderHistory(rows){const el=document.getElementById('history'),sum=doc
  dates.forEach(dt=>{const items=byd[dt];const hit=items.filter(x=>x.result==='hit').length,st2=items.filter(x=>x.result).length;h+=`<div class="hday"><div class="hday-h">${dt} <span>${st2?('· '+hit+'/'+st2+' '+t('cHit')):''}</span></div>`+items.map(r=>{const s=r.result==='hit'?'✅':(r.result==='miss'?'❌':'⏳');const clv=r.clv_pct!=null?` · CLV ${(+r.clv_pct>0?'+':'')}${(+r.clv_pct).toFixed(1)}%`:'';return `<div class="hrow"><span>${s}</span><span class="hm">${r.home} – ${r.away}</span><span class="hp">${mkn(r.market)}</span><span class="hpr">${r.model_prob?(+r.model_prob*100).toFixed(0)+'%':''}${r.odds?' · '+(+r.odds).toFixed(2):''}${clv}</span><span class="hsc">${r.actual_score||''}</span></div>`;}).join('')+`</div>`;});el.innerHTML=h;}
 setLang(lang);
 renderAutoCoupons();
-settleThenHistory('');
+// v8.1: every page open auto-loads matches AND settles finished games (auto() chains:
+// fixtures -> savePicks -> settle -> history refresh). Returning to the tab after >60s
+// re-runs the same refresh so scores/results stay current without a manual click.
+auto();
+let lastAutoRefresh=Date.now();
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden && Date.now()-lastAutoRefresh>60000){ lastAutoRefresh=Date.now(); auto(); } });
 </script></body></html>

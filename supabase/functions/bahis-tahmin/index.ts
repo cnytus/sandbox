@@ -1,4 +1,31 @@
-// Bahis Tahmin API v6
+// Bahis Tahmin API v8
+// Changes vs v7 (accuracy push, all five user-approved items):
+//  I)   WC tournament form: finished World Cup matches (football-data.org comp=WC) build a
+//       recency-weighted per-team attack/defense table; its goal-difference signal is blended
+//       into the Elo split (WC_FORM_D_W). Totals stay market-anchored (v7 principle).
+//       NOTE: true lineup/injury data needs a paid feed (e.g. API-Football key) - not wired.
+//  II)  Live Elo: settle() applies goal-diff weighted Elo updates (World Football Elo formula,
+//       K=50, G multiplier) to bahis_tahmin.elo_ratings via bahis_apply_elo_updates RPC, so
+//       ratings track the tournament instead of going stale.
+//  III) Mild 1x2 shrinkage toward market (X12_PROB_SHRINK=0.85) - realized CLV was negative
+//       (-3.9%), evidence that raw 1x2 edges were also overconfident.
+//  IV)  Multi-line totals: consensus now devigs Over/Under at 1.5, 2.5 AND 3.5; the market
+//       lambda fit matches the whole goal distribution, not just one point of it.
+//  V)   Kelly staking: every value pick carries kelly_pct = quarter-Kelly bankroll %, capped
+//       at 5% (risk control), surfaced in the UI.
+// Changes vs v6 (O/U accuracy fix - root cause of Switzerland O 2.5 miss on 2026-07-03):
+//  A) eloLambdas no longer invents a goal total. Elo carries ONLY win/draw/loss information,
+//     so the old unconstrained lambda fit (pOver=null) let the optimizer inflate totals to 5+
+//     goals for favourites (Switzerland lambda 3.25 -> P(Over)=87% vs market 43.5%). Now the
+//     total mu is anchored to the market-implied total and Elo only sets the home/away SPLIT.
+//     Side effect: 1-D diff search replaces a second full 2-D grid search (cheaper CPU).
+//  B) League form totals are shrunk toward the market total (FORM_TOTAL_W) keeping the form
+//     goal difference - form is informative about who scores, weakly about how many.
+//  C) Probability-level shrinkage toward market for goals families (ou/btts): the independent
+//     model keeps full weight on 1x2 but is blended toward market on totals-type markets
+//     (GOAL_PROB_SHRINK). Kills systematic 40%+ fake edges on O/U.
+//  D) In-play filter: events whose commence_time has passed are skipped - live odds are
+//     score-conditioned and produced fake edges.
 // Changes vs v5 (per user-approved improvement list):
 //  1) Independent model is no longer blended with the market before computing "edge" -
 //     when form/Elo data exists it is used PURE; edge is always independent-model vs market.
@@ -30,16 +57,23 @@ function poisson(k,l){ let f=1; for(let i=2;i<=k;i++) f*=i; return Math.exp(-l)*
 function dc(i,j,lh,la,rho){ if(i===0&&j===0)return 1-lh*la*rho; if(i===0&&j===1)return 1+lh*rho; if(i===1&&j===0)return 1+la*rho; if(i===1&&j===1)return 1-rho; return 1; }
 function probs(lh,la,rho){ const mx=8; const cells=[]; let tot=0;
   for(let i=0;i<mx;i++) for(let j=0;j<mx;j++){ let p=poisson(i,lh)*poisson(j,la); if(i<2&&j<2)p*=dc(i,j,lh,la,rho); cells.push({i,j,p}); tot+=p; }
-  let ph=0,pd=0,pa=0,o=0,by=0; const grid=[];
-  for(const c of cells){ const p=c.p/tot; if(c.i>c.j)ph+=p; else if(c.i===c.j)pd+=p; else pa+=p; if(c.i+c.j>2.5)o+=p; if(c.i>=1&&c.j>=1)by+=p; grid.push({s:c.i+"-"+c.j,p}); }
-  grid.sort((a,b)=>b.p-a.p); return { "1":ph,"X":pd,"2":pa,"O":o,"U":1-o,"BY":by,"BN":1-by, top:grid.slice(0,4) }; }
+  let ph=0,pd=0,pa=0,o=0,o15=0,o35=0,by=0; const grid=[];
+  for(const c of cells){ const p=c.p/tot; if(c.i>c.j)ph+=p; else if(c.i===c.j)pd+=p; else pa+=p; const t=c.i+c.j; if(t>2.5)o+=p; if(t>1.5)o15+=p; if(t>3.5)o35+=p; if(c.i>=1&&c.j>=1)by+=p; grid.push({s:c.i+"-"+c.j,p}); }
+  grid.sort((a,b)=>b.p-a.p); return { "1":ph,"X":pd,"2":pa,"O":o,"U":1-o,"O15":o15,"O35":o35,"BY":by,"BN":1-by, top:grid.slice(0,4) }; }
 // Coarse-to-fine grid search (was a flat 0.05-step grid = ~4.7k probs() evaluations per call; that,
 // plus a *second* full search inside eloLambdas() for every World Cup match, was blowing the edge
 // function's CPU budget - WORKER_RESOURCE_LIMIT 546s - once enough concurrent WC fixtures were on
 // the odds feed). Coarse pass finds the neighborhood cheaply, fine pass refines locally around it:
 // ~5x fewer probs() calls for essentially the same precision.
+// v8: pOver may be a number (legacy, the 2.5 line) or a map {"1.5":p,"2.5":p,"3.5":p} -
+// fitting all quoted lines pins down the SHAPE of the goal distribution, not just one point.
+// The 2.5 line gets double weight (most liquid).
 function estimateLambdas(pH,pA,pOver,rho){
-  const err=(lh,la)=>{ const r=probs(lh,la,rho); let e=Math.pow(r["1"]-pH,2)+Math.pow(r["2"]-pA,2); if(pOver!=null) e+=Math.pow(r["O"]-pOver,2); return e; };
+  const lines=(pOver!=null&&typeof pOver==="object")? pOver : (pOver!=null? {"2.5":pOver} : null);
+  const LKEY={"1.5":"O15","2.5":"O","3.5":"O35"};
+  const err=(lh,la)=>{ const r=probs(lh,la,rho); let e=Math.pow(r["1"]-pH,2)+Math.pow(r["2"]-pA,2);
+    if(lines) for(const ln in lines){ const k=LKEY[ln]; if(k&&lines[ln]!=null) e+=(ln==="2.5"?2:1)*Math.pow(r[k]-lines[ln],2); }
+    return e; };
   let best={lh:1.3,la:1.1,err:1e9};
   for(let lh=0.2;lh<=3.6;lh+=0.2) for(let la=0.2;la<=3.6;la+=0.2){ const e=err(lh,la); if(e<best.err) best={lh,la,err:e}; }
   const loLh=Math.max(0.05,best.lh-0.25), hiLh=Math.min(4.0,best.lh+0.25);
@@ -68,6 +102,16 @@ function findKey(name,map){ const n=norm(name); if(map[n]!=null)return n; for(co
 
 // ---------- model parameters (item 2: self-learning reads/writes these) ----------
 const DEFAULT_PARAMS={ version:1, rho:-0.12, edge_threshold_base:5, family_correction:1.73, recency_halflife_days:45, home_elo_bonus:60 };
+// v7 goal-total calibration constants (code-level; promote to model_params if they need tuning):
+const FORM_TOTAL_W=0.35;      // weight of the FORM total vs the market total (0=pure market total)
+const GOAL_PROB_SHRINK=0.6;   // ou/btts model prob = market + this * (model - market)
+const FALLBACK_TOTAL_MU=2.7;  // used only if no market total exists to anchor to
+// v8 constants:
+const X12_PROB_SHRINK=0.85;   // mild market shrink on 1x2 too (realized CLV was negative)
+const WC_FORM_D_W=0.3;        // weight of tournament-form goal diff vs Elo diff in the WC split
+const KELLY_FRACTION=0.25;    // quarter-Kelly
+const KELLY_CAP_PCT=5;        // max suggested bankroll % per pick
+const ELO_K_WC=50;            // World Cup K-factor (World Football Elo convention)
 async function getParams(){
   try{ const {data,error}=await sb().rpc("bahis_get_active_params"); if(!error && data && data.length){ const p=data[0]; return { version:p.version, rho:+p.rho, edge_threshold_base:+p.edge_threshold_base, family_correction:+p.family_correction, recency_halflife_days:+p.recency_halflife_days, home_elo_bonus:+p.home_elo_bonus }; } }catch(_){}
   return DEFAULT_PARAMS;
@@ -104,10 +148,60 @@ function buildRecencyForm(matches,halflife,now){
   if(thW<8||taW<8) return null;
   return { home,away,avgHome:thG/thW,avgAway:taG/taW };
 }
-function formLambdas(h0,a0,S){ const hk=findKey(h0,S.home), ak=findKey(a0,S.away); if(!hk||!ak) return null; const h=S.home[hk],a=S.away[ak]; if(h.w<1||a.w<1) return null;
+// v7: marketMu shrinks the form total toward the market total while keeping the form goal
+// DIFFERENCE (who is stronger). Form samples are noisy on scoring volume; the market isn't.
+function formLambdas(h0,a0,S,marketMu){ const hk=findKey(h0,S.home), ak=findKey(a0,S.away); if(!hk||!ak) return null; const h=S.home[hk],a=S.away[ak]; if(h.w<1||a.w<1) return null;
   const attH=(h.gf/h.w)/S.avgHome, defA=(a.ga/a.w)/S.avgHome, attA=(a.gf/a.w)/S.avgAway, defH=(h.ga/h.w)/S.avgAway;
-  const lh=S.avgHome*attH*defA, la=S.avgAway*attA*defH;
+  let lh=S.avgHome*attH*defA, la=S.avgAway*attA*defH;
+  if(marketMu!=null&&marketMu>0.6&&marketMu<7){
+    const d=lh-la, T=FORM_TOTAL_W*(lh+la)+(1-FORM_TOTAL_W)*marketMu;
+    lh=(T+d)/2; la=(T-d)/2;
+  }
   return { lh:Math.min(4.5,Math.max(0.15,lh)), la:Math.min(4.5,Math.max(0.15,la)) }; }
+
+// ---------- v8: World Cup tournament form (finished WC matches, football-data.org) ----------
+// Per-team recency-weighted goals for/against across THIS tournament. Home/away split is
+// meaningless at a WC (neutral venues), so both sides feed one symmetric table.
+async function fetchWcForm(halflife){
+  const key="WC|"+halflife; const c=formCache[key]; if(c&&Date.now()-c.t<3600000) return c.v;
+  try{
+    const r=await fetch(`https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED`,{headers:{"X-Auth-Token":FD_KEY}});
+    if(!r.ok) return null;
+    const d=await r.json(); if(!Array.isArray(d.matches)) return null;
+    const v=buildTournamentForm(d.matches,halflife,new Date());
+    if(v) formCache[key]={t:Date.now(),v};
+    return v;
+  }catch(_){ return null; }
+}
+function buildTournamentForm(matches,halflife,now){
+  const T={}; let tg=0,tw=0;
+  for(const m of matches){
+    if(m.status!=="FINISHED") continue;
+    const sc=m.score&&m.score.fullTime; if(!sc||sc.home==null||sc.away==null) continue;
+    const days=(now.getTime()-new Date(m.utcDate).getTime())/86400000; if(days<0) continue;
+    const w=Math.pow(0.5, days/halflife);
+    const hn=norm(m.homeTeam&&m.homeTeam.name), an=norm(m.awayTeam&&m.awayTeam.name); if(!hn||!an) continue;
+    T[hn]=T[hn]||{gf:0,ga:0,w:0}; T[an]=T[an]||{gf:0,ga:0,w:0};
+    T[hn].gf+=sc.home*w; T[hn].ga+=sc.away*w; T[hn].w+=w;
+    T[an].gf+=sc.away*w; T[an].ga+=sc.home*w; T[an].w+=w;
+    tg+=(sc.home+sc.away)*w; tw+=2*w;
+  }
+  if(tw<8) return null;
+  return { teams:T, avg:tg/tw }; // avg = tournament goals per team per match
+}
+// Goal-difference implied by tournament form at total mu (attack*defense multiplicative model,
+// renormalized so the total stays exactly mu - only the SPLIT is form-informed).
+function wcFormDiff(h0,a0,F,mu){
+  if(!F) return null;
+  const hk=findKey(h0,F.teams), ak=findKey(a0,F.teams); if(!hk||!ak) return null;
+  const h=F.teams[hk], a=F.teams[ak]; if(h.w<0.8||a.w<0.8) return null;
+  const attH=(h.gf/h.w)/F.avg, defA=(a.ga/a.w)/F.avg, attA=(a.gf/a.w)/F.avg, defH=(h.ga/h.w)/F.avg;
+  let lh=attH*defA, la=attA*defH; const s=lh+la; if(s<=0) return null;
+  lh=mu*lh/s; la=mu*la/s;
+  // confidence grows with matches played (w is a decayed match count)
+  const conf=Math.min(1,(h.w+a.w)/4);
+  return { d:(lh-la)*conf, conf };
+}
 
 // ---------- World Cup independent model: national-team Elo (item 8) ----------
 async function getEloMap(){
@@ -116,21 +210,37 @@ async function getEloMap(){
     return Object.keys(map).length? map : null;
   }catch(_){ return null; }
 }
-function eloLambdas(home,away,map,homeBonus,rho){
+// v7: mu (total goals) is FIXED to the market-implied total; Elo only decides the split.
+// Rationale: Elo encodes zero information about scoring environment, so fitting both lambdas
+// to 1x2 probs alone is under-determined and systematically inflates totals for favourites
+// (this produced e.g. lambda 3.25 / P(Over)=87% for Switzerland-Algeria; market said 43.5%).
+// The 1-D diff search targets the Elo WIN EXPECTANCY We = P(1) + 0.5*P(X); the draw prob then
+// falls out of the Poisson/DC structure at the market total, which backtests closer to market
+// draw rates than the old drawP heuristic did. Also ~100x cheaper than the old 2-D grid.
+// v8: optional formD (tournament-form goal diff) is blended into the Elo-fitted diff with
+// weight WC_FORM_D_W - two independent signals on the same axis (who is stronger right now).
+function eloLambdas(home,away,map,homeBonus,rho,mu,formD){
   const hk=findKey(home,map), ak=findKey(away,map); if(hk==null||ak==null) return null;
   const diff=(map[hk]+homeBonus)-map[ak];
-  const We=1/(Math.pow(10,-diff/400)+1); // P(win) + 0.5*P(draw), standard Elo win-expectancy
-  const drawP=Math.max(0.16, Math.min(0.32, 0.30 - Math.abs(diff)/900)); // heuristic: closer teams draw more
-  let pWin=We-drawP/2, pLoss=1-We-drawP/2;
-  pWin=Math.max(0.03,Math.min(0.94,pWin)); pLoss=Math.max(0.03,Math.min(0.94,pLoss));
-  const est=estimateLambdas(pWin,pLoss,null,rho);
-  return { lh:est.lh, la:est.la };
+  const We=1/(Math.pow(10,-diff/400)+1); // standard Elo win-expectancy = P(win) + 0.5*P(draw)
+  const M=(mu!=null&&mu>0.6&&mu<7)? mu : FALLBACK_TOTAL_MU;
+  const mk=(d)=>({ lh:Math.max(0.05,(M+d)/2), la:Math.max(0.05,(M-d)/2) });
+  const err=(d)=>{ const {lh,la}=mk(d); const r=probs(lh,la,rho); return Math.pow((r["1"]+0.5*r["X"])-We,2); };
+  const dMax=Math.min(2.6, M-0.1);
+  let best={d:0,err:err(0)};
+  for(let d=-dMax; d<=dMax; d+=0.1){ const e=err(d); if(e<best.err) best={d,err:e}; }
+  for(let d=Math.max(-dMax,best.d-0.12); d<=Math.min(dMax,best.d+0.12); d+=0.02){ const e=err(d); if(e<best.err) best={d,err:e}; }
+  let d=best.d;
+  if(formD!=null&&isFinite(formD)) d=Math.max(-dMax,Math.min(dMax,(1-WC_FORM_D_W)*d+WC_FORM_D_W*formD));
+  return mk(d);
 }
 
 // ---------- multi-bookmaker consensus (item 3) ----------
 function buildConsensus(ev){
   const books=ev.bookmakers||[];
-  const raw1=[],rawX=[],raw2=[],rawO=[],rawU=[]; const best={};
+  const raw1=[],rawX=[],raw2=[]; const best={};
+  const TOTAL_LINES=[1.5,2.5,3.5];                       // v8: multi-line totals
+  const rawOv={}, rawUn={}; for(const L of TOTAL_LINES){ rawOv[L]=[]; rawUn[L]=[]; }
   for(const bk of books){
     const h2h=bk.markets&&bk.markets.find((m)=>m.key==="h2h");
     if(h2h){
@@ -143,19 +253,23 @@ function buildConsensus(ev){
     }
     const tot=bk.markets&&bk.markets.find((m)=>m.key==="totals");
     if(tot){
-      const ov=tot.outcomes.find((o)=>o.name==="Over"&&Math.abs((o.point??99)-2.5)<0.01);
-      const un=tot.outcomes.find((o)=>o.name==="Under"&&Math.abs((o.point??99)-2.5)<0.01);
-      if(ov&&ov.price>1){ rawO.push(1/ov.price); best["O"]=Math.max(best["O"]||0,ov.price); }
-      if(un&&un.price>1){ rawU.push(1/un.price); best["U"]=Math.max(best["U"]||0,un.price); }
+      for(const L of TOTAL_LINES){
+        const ov=tot.outcomes.find((o)=>o.name==="Over"&&Math.abs((o.point??99)-L)<0.01);
+        const un=tot.outcomes.find((o)=>o.name==="Under"&&Math.abs((o.point??99)-L)<0.01);
+        if(ov&&ov.price>1){ rawOv[L].push(1/ov.price); if(L===2.5) best["O"]=Math.max(best["O"]||0,ov.price); }
+        if(un&&un.price>1){ rawUn[L].push(1/un.price); if(L===2.5) best["U"]=Math.max(best["U"]||0,un.price); }
+      }
     }
   }
-  let pH=null,pD=null,pA=null,pOver=null;
+  let pH=null,pD=null,pA=null,pOver=null,pOvers=null;
   if(raw1.length&&raw2.length){
     if(rawX.length){ const [d1,dX,d2]=shinDevig([avg(raw1),avg(rawX),avg(raw2)]); pH=d1; pD=dX; pA=d2; }
     else { const [d1,d2]=shinDevig([avg(raw1),avg(raw2)]); pH=d1; pA=d2; }
   }
-  if(rawO.length&&rawU.length){ const [dO]=shinDevig([avg(rawO),avg(rawU)]); pOver=dO; }
-  return { pH,pD,pA,pOver, odds:best, books:books.length };
+  for(const L of TOTAL_LINES){
+    if(rawOv[L].length&&rawUn[L].length){ const [dO]=shinDevig([avg(rawOv[L]),avg(rawUn[L])]); (pOvers=pOvers||{})[String(L)]=dO; if(L===2.5) pOver=dO; }
+  }
+  return { pH,pD,pA,pOver,pOvers, odds:best, books:books.length };
 }
 
 // ---------- build one match's full market table ----------
@@ -169,9 +283,22 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={}){
   if(indep){ mdLh=indep.lh; mdLa=indep.la; source=extra.__wc?"elo":"form"; }
   else { const md=marketAdj(mLh,mLa); mdLh=md.lh; mdLa=md.la; source="market"; }
   const model=probs(mdLh,mdLa,rho);
-  const markets=MKID.map((m)=>{ const mod=model[m],mkt=market[m],edge=mod-mkt,odd=odds[m]||null;
+  // v7: goals-family probs are shrunk toward market. v8: 1x2 gets a MILD shrink too
+  // (X12_PROB_SHRINK) - negative realized CLV showed raw 1x2 edges were overconfident.
+  const markets=MKID.map((m)=>{ let mod=model[m]; const mkt=market[m];
+    if(source!=="market"){
+      const s=(FAMILY[m]==="ou"||FAMILY[m]==="btts")? GOAL_PROB_SHRINK : X12_PROB_SHRINK;
+      mod=mkt+s*(mod-mkt);
+    }
+    const edge=mod-mkt,odd=odds[m]||null;
     return { code:m,name:MKN[m],family:FAMILY[m],model:+(mod*100).toFixed(1),mkt:+(mkt*100).toFixed(1),edge:+(edge*100).toFixed(1),odds:odd,value:(edge*100)>=threshold }; });
   const best=markets.filter((x)=>x.value).sort((a,b)=>b.edge-a.edge)[0]||null;
+  // v8: quarter-Kelly suggested bankroll % on the pick (capped for risk control)
+  if(best&&best.odds&&best.odds>1){
+    const p=best.model/100, b=best.odds-1;
+    const kelly=Math.max(0,(p*best.odds-1)/b);
+    best.kelly_pct=+Math.min(KELLY_CAP_PCT, KELLY_FRACTION*kelly*100).toFixed(1);
+  }
   return { home,away,source,model_lh:+mdLh.toFixed(2),model_la:+mdLa.toFixed(2),market_lh:+mLh.toFixed(2),market_la:+mLa.toFixed(2),
     top:model.top.map((t)=>({score:t.s,p:+(t.p*100).toFixed(0)})), markets, pick:best, ...extra };
 }
@@ -184,14 +311,24 @@ async function fetchFixtures(sport){
   const isWC=sport===WORLD_CUP_SPORT;
   const form=(!isWC && COMP[sport])? await fetchCompetitionForm(COMP[sport],params.recency_halflife_days) : null;
   const eloMap=isWC? await getEloMap() : null;
+  const wcForm=isWC? await fetchWcForm(21) : null; // v8: short half-life - tournament form moves fast
   const out=[]; let formCount=0;
   for(const ev of events){
+    // v7: skip matches that already kicked off - in-play odds are score-conditioned and
+    // produce huge fake "edges" (observed live: P(Over)~0 late in a 2-goal match).
+    if(ev.commence_time && new Date(ev.commence_time).getTime()<=Date.now()) continue;
     const cons=buildConsensus(ev);
     if(cons.pH==null||cons.pA==null) continue;
-    const est=estimateLambdas(cons.pH,cons.pA,cons.pOver,params.rho);
+    const est=estimateLambdas(cons.pH,cons.pA,cons.pOvers||cons.pOver,params.rho); // v8: all quoted total lines
+    // v7: market-implied total anchors the independent models' scoring environment.
+    // est is fitted WITH the totals lines, so est.lh+est.la ~= the market's expected total goals.
+    const marketMu=(cons.pOver!=null||cons.pOvers!=null)? est.lh+est.la : null;
     let indep=null;
-    if(isWC){ indep=eloMap? eloLambdas(ev.home_team,ev.away_team,eloMap,params.home_elo_bonus,params.rho) : null; }
-    else if(form){ indep=formLambdas(ev.home_team,ev.away_team,form); }
+    if(isWC&&eloMap){
+      const fd=wcFormDiff(ev.home_team,ev.away_team,wcForm,marketMu??FALLBACK_TOTAL_MU); // v8
+      indep=eloLambdas(ev.home_team,ev.away_team,eloMap,params.home_elo_bonus,params.rho,marketMu,fd?fd.d:null);
+    }
+    else if(form){ indep=formLambdas(ev.home_team,ev.away_team,form,marketMu); }
     if(indep) formCount++;
     const threshold=params.edge_threshold_base*params.family_correction;
     out.push(buildAuto(ev.home_team,ev.away_team,est.lh,est.la,cons.odds,indep,params.rho,threshold,
@@ -207,15 +344,43 @@ function evalMkt(code,hs,as){ const tot=hs+as; switch(code){ case"1":return hs>a
 async function settle(){ try{
   const {data:pend,error}=await sb().rpc("bahis_pending"); if(error) return {error:error.message}; if(!pend||!pend.length) return {settled:0};
   const bySport={}; for(const r of pend){ const sp=r.sport||""; (bySport[sp]=bySport[sp]||[]).push(r); }
-  const updates=[];
+  const updates=[]; const wcSettled={}; // v8: unique WC matches settled this run -> live Elo update
   for(const sp in bySport){ if(!sp) continue;
     let games; try{ const sr=await fetch(`https://api.the-odds-api.com/v4/sports/${sp}/scores/?daysFrom=3&apiKey=${ODDS_KEY}`); if(!sr.ok) continue; games=await sr.json(); }catch(_){ continue; }
-    const done={}; for(const g of (games||[])){ if(g.completed&&g.scores){ const hs=Number(g.scores.find((s)=>s.name===g.home_team)?.score); const as=Number(g.scores.find((s)=>s.name===g.away_team)?.score); if(!isNaN(hs)&&!isNaN(as)) done[norm(g.home_team)+"|"+norm(g.away_team)]={hs,as}; } }
+    const done={}; for(const g of (games||[])){ if(g.completed&&g.scores){ const hs=Number(g.scores.find((s)=>s.name===g.home_team)?.score); const as=Number(g.scores.find((s)=>s.name===g.away_team)?.score); if(!isNaN(hs)&&!isNaN(as)) done[norm(g.home_team)+"|"+norm(g.away_team)]={hs,as,home:g.home_team,away:g.away_team}; } }
     for(const r of bySport[sp]){ let key=norm(r.home)+"|"+norm(r.away); let sc=done[key]; if(!sc){ for(const k in done){ const [h,a]=k.split("|"); if((h.includes(norm(r.home))||norm(r.home).includes(h))&&(a.includes(norm(r.away))||norm(r.away).includes(a))){ sc=done[k]; break; } } } if(!sc) continue;
+      if(sp===WORLD_CUP_SPORT) wcSettled[norm(sc.home)+"|"+norm(sc.away)]=sc;
       updates.push({id:r.id, actual_score:sc.hs+"-"+sc.as, result: evalMkt(r.market,sc.hs,sc.as)?"hit":"miss"}); } }
-  if(updates.length){ const {data,error:e2}=await sb().rpc("bahis_set_results",{p:updates}); if(e2) return {error:e2.message}; return {settled:data}; }
+  if(updates.length){ const {data,error:e2}=await sb().rpc("bahis_set_results",{p:updates}); if(e2) return {error:e2.message};
+    const eloUpd=await applyEloUpdates(wcSettled);
+    return {settled:data, elo_updated:eloUpd}; }
   return {settled:0};
 }catch(e){ return {error:String(e)}; } }
+
+// v8: goal-diff weighted Elo update (World Football Elo convention: K=50 at a WC, margin
+// multiplier G = 1 / 1.5 / (11+N)/8). Neutral venue -> no home bonus in the expectancy.
+// Dedup is per-run (a match's rows all settle together); the rare late-saved row re-applying
+// a small delta is accepted rather than adding a settled-matches ledger.
+async function applyEloUpdates(wcSettled){
+  const keys=Object.keys(wcSettled); if(!keys.length) return 0;
+  const map=await getEloMap(); if(!map) return 0;
+  const nameByNorm={}; // elo map is keyed by norm(team_name); we need original names for the RPC
+  try{ const {data}=await sb().rpc("bahis_all_elo"); for(const r of (data||[])) nameByNorm[norm(r.team_name)]=r.team_name; }catch(_){ return 0; }
+  const out=[];
+  for(const k of keys){ const sc=wcSettled[k];
+    const hk=findKey(sc.home,map), ak=findKey(sc.away,map); if(hk==null||ak==null||hk===ak) continue;
+    const eH=map[hk], eA=map[ak];
+    const We=1/(Math.pow(10,-(eH-eA)/400)+1);
+    const W=sc.hs>sc.as?1:(sc.hs===sc.as?0.5:0);
+    const N=Math.abs(sc.hs-sc.as);
+    const G=N<=1?1:(N===2?1.5:(11+N)/8);
+    const delta=ELO_K_WC*G*(W-We);
+    out.push({team:nameByNorm[hk]||sc.home, elo:+(eH+delta).toFixed(1)});
+    out.push({team:nameByNorm[ak]||sc.away, elo:+(eA-delta).toFixed(1)});
+  }
+  if(!out.length) return 0;
+  try{ const {data:n}=await sb().rpc("bahis_apply_elo_updates",{p:out}); return n||0; }catch(_){ return 0; }
+}
 
 // ---------- closing-line capture (item 7) ----------
 async function captureClosing(){
@@ -318,7 +483,7 @@ async function calibrate(){
 
 Deno.serve(async (req)=>{
   if(req.method==="OPTIONS") return new Response("ok",{headers:CORS});
-  if(req.method==="GET") return J({ ok:true, service:"bahis-tahmin API v6" });
+  if(req.method==="GET") return J({ ok:true, service:"bahis-tahmin API v8" });
   if(req.method==="POST"){ let body={}; try{ body=await req.json(); }catch{ return J({error:"geçersiz JSON"},400); }
     if(body.action==="fixtures") return J(await fetchFixtures(body.sport||WORLD_CUP_SPORT));
     if(body.action==="save") return J(await savePreds(body.picks||[]));
