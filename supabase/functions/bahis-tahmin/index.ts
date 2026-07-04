@@ -112,6 +112,18 @@ const WC_FORM_D_W=0.3;        // weight of tournament-form goal diff vs Elo diff
 const KELLY_FRACTION=0.25;    // quarter-Kelly
 const KELLY_CAP_PCT=5;        // max suggested bankroll % per pick
 const ELO_K_WC=50;            // World Cup K-factor (World Football Elo convention)
+// v8.2: 2026 WC is co-hosted by USA/Canada/Mexico. home_elo_bonus only applies when a host
+// nation actually plays in its own country; every other WC match is neutral-venue. If the
+// host is the odds-listed AWAY side it still gets the crowd edge (negative bonus on the diff).
+// League matches are untouched - they go through formLambdas, where real home advantage is
+// already baked into the home/away form splits.
+const WC_HOSTS=new Set(["usa","unitedstates","canada","mexico"]);
+function wcHomeBonus(home,away,bonus){
+  const h=WC_HOSTS.has(norm(home)), a=WC_HOSTS.has(norm(away));
+  if(h&&!a) return bonus;
+  if(a&&!h) return -bonus;
+  return 0; // neutral venue, or two hosts (venue unknown)
+}
 async function getParams(){
   try{ const {data,error}=await sb().rpc("bahis_get_active_params"); if(!error && data && data.length){ const p=data[0]; return { version:p.version, rho:+p.rho, edge_threshold_base:+p.edge_threshold_base, family_correction:+p.family_correction, recency_halflife_days:+p.recency_halflife_days, home_elo_bonus:+p.home_elo_bonus }; } }catch(_){}
   return DEFAULT_PARAMS;
@@ -314,9 +326,14 @@ async function fetchFixtures(sport){
   const wcForm=isWC? await fetchWcForm(21) : null; // v8: short half-life - tournament form moves fast
   const out=[]; let formCount=0;
   for(const ev of events){
-    // v7: skip matches that already kicked off - in-play odds are score-conditioned and
-    // produce huge fake "edges" (observed live: P(Over)~0 late in a 2-goal match).
-    if(ev.commence_time && new Date(ev.commence_time).getTime()<=Date.now()) continue;
+    // v7: matches that already kicked off get NO model/markets - in-play odds are
+    // score-conditioned and produce fake "edges". v8.3: still surfaced as info-only
+    // live cards so the page shows the full slate.
+    if(ev.commence_time && new Date(ev.commence_time).getTime()<=Date.now()){
+      // markets:[] + zero lambdas keep OLDER frontends from crashing on live cards
+      out.push({ home:ev.home_team, away:ev.away_team, commence:ev.commence_time, live:true, model_lh:0, model_la:0, markets:[], pick:null, source:"live" });
+      continue;
+    }
     const cons=buildConsensus(ev);
     if(cons.pH==null||cons.pA==null) continue;
     const est=estimateLambdas(cons.pH,cons.pA,cons.pOvers||cons.pOver,params.rho); // v8: all quoted total lines
@@ -326,7 +343,8 @@ async function fetchFixtures(sport){
     let indep=null;
     if(isWC&&eloMap){
       const fd=wcFormDiff(ev.home_team,ev.away_team,wcForm,marketMu??FALLBACK_TOTAL_MU); // v8
-      indep=eloLambdas(ev.home_team,ev.away_team,eloMap,params.home_elo_bonus,params.rho,marketMu,fd?fd.d:null);
+      const bonus=wcHomeBonus(ev.home_team,ev.away_team,params.home_elo_bonus);          // v8.2
+      indep=eloLambdas(ev.home_team,ev.away_team,eloMap,bonus,params.rho,marketMu,fd?fd.d:null);
     }
     else if(form){ indep=formLambdas(ev.home_team,ev.away_team,form,marketMu); }
     if(indep) formCount++;
