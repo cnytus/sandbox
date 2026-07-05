@@ -304,7 +304,9 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={}){
     }
     const edge=mod-mkt,odd=odds[m]||null;
     return { code:m,name:MKN[m],family:FAMILY[m],model:+(mod*100).toFixed(1),mkt:+(mkt*100).toFixed(1),edge:+(edge*100).toFixed(1),odds:odd,value:(edge*100)>=threshold }; });
-  const best=markets.filter((x)=>x.value).sort((a,b)=>b.edge-a.edge)[0]||null;
+  // v8.4: a "value pick" must be BETTABLE - markets without a quoted price (often BY/BN)
+  // can't be staked, and unpriced picks were polluting the hit-rate/ROI statistics.
+  const best=markets.filter((x)=>x.value&&x.odds).sort((a,b)=>b.edge-a.edge)[0]||null;
   // v8: quarter-Kelly suggested bankroll % on the pick (capped for risk control)
   if(best&&best.odds&&best.odds>1){
     const p=best.model/100, b=best.odds-1;
