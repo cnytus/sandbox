@@ -16,7 +16,29 @@ h1 .tag{font-weight:500;font-size:13px;opacity:.85}
 #lang{background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.35);border-radius:8px;padding:6px 10px;font-size:13px;font-family:inherit;cursor:pointer}
 #lang option{color:#1f2d3d}
 .wrap{max-width:1180px;margin:22px auto;padding:0 24px;display:grid;grid-template-columns:1fr 366px;gap:20px;align-items:start}
-@media(max-width:900px){.wrap{grid-template-columns:1fr}}
+/* v8.5 mobile: coupons move ABOVE the match list; sticky/height limits disabled */
+@media(max-width:900px){
+.wrap{grid-template-columns:1fr}
+aside{order:-1;position:static;max-height:none;overflow:visible}
+main{order:2}
+}
+/* v8.5 mobile: stop right-side clipping - tighter paddings + tables scroll inside their card */
+@media(max-width:600px){
+.wrap{padding:0 10px;margin:12px auto;gap:14px}
+header{padding:16px 12px 14px}
+h1{font-size:18px}
+.sub{font-size:12px}
+.bar{padding:10px;gap:7px}
+.match{padding:12px}
+table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+td,th{padding:6px 5px;font-size:12px}
+.oc input{width:54px;padding:5px 6px}
+.lr{gap:8px}
+.hrow{font-size:11px;gap:5px}
+.hm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+#viewHistory{padding:0 10px}
+.legend{gap:8px;font-size:10.5px;padding:8px 10px}
+}
 button{cursor:pointer;font-family:inherit;border:none;border-radius:9px;padding:9px 15px;font-size:13px;font-weight:600;transition:.15s}
 .b1{background:var(--accent);color:#fff;box-shadow:0 2px 8px rgba(59,111,176,.28)}.b1:hover{background:#33639c;transform:translateY(-1px)}
 .b2{background:#fff;color:var(--accent);border:1px solid var(--line)}.b2:hover{background:var(--panel2)}
