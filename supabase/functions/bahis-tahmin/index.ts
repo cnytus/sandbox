@@ -112,6 +112,7 @@ const WC_FORM_D_W=0.3;        // weight of tournament-form goal diff vs Elo diff
 const KELLY_FRACTION=0.25;    // quarter-Kelly
 const KELLY_CAP_PCT=5;        // max suggested bankroll % per pick
 const ELO_K_WC=50;            // World Cup K-factor (World Football Elo convention)
+const ODDS_CACHE_TTL_S=300;   // v8.6: odds served from DB cache for 5 min - saves API credits
 // v8.2: 2026 WC is co-hosted by USA/Canada/Mexico. home_elo_bonus only applies when a host
 // nation actually plays in its own country; every other WC match is neutral-venue. If the
 // host is the odds-listed AWAY side it still gets the crowd edge (negative bonus on the diff).
@@ -317,11 +318,23 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={}){
     top:model.top.map((t)=>({score:t.s,p:+(t.p*100).toFixed(0)})), markets, pick:best, ...extra };
 }
 
+// v8.6: single gateway for odds-API event fetches. DB-cached per sport (ODDS_CACHE_TTL_S) so
+// page opens / league switches / crons within the TTL cost ZERO API credits. Used by both
+// fetchFixtures and captureClosing (same endpoint, same shape).
+async function fetchOddsEvents(sport){
+  try{ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:sport,max_age_seconds:ODDS_CACHE_TTL_S}); if(data) return { events:data, cached:true }; }catch(_){}
+  const res=await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=h2h,totals&oddsFormat=decimal`);
+  if(!res.ok) return { error:res.status };
+  const events=await res.json();
+  try{ await sb().rpc("bahis_set_odds_cache",{sp:sport,p:events}); }catch(_){}
+  return { events, cached:false };
+}
+
 async function fetchFixtures(sport){
   const params=await getParams();
-  const res=await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=h2h,totals&oddsFormat=decimal`);
-  if(!res.ok) return { error:`Oran API hatası (${res.status}).` };
-  const events=await res.json();
+  const oe=await fetchOddsEvents(sport);
+  if(oe.error) return { error:`Oran API hatası (${oe.error}).` };
+  const events=oe.events;
   const isWC=sport===WORLD_CUP_SPORT;
   const form=(!isWC && COMP[sport])? await fetchCompetitionForm(COMP[sport],params.recency_halflife_days) : null;
   const eloMap=isWC? await getEloMap() : null;
@@ -414,7 +427,7 @@ async function captureClosing(){
       const {data:pend,error:pe}=await sb().rpc("bahis_pending_closing_rows",{sp});
       if(pe||!pend||!pend.length) continue;
       let events;
-      try{ const r=await fetch(`https://api.the-odds-api.com/v4/sports/${sp}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=h2h,totals&oddsFormat=decimal`); if(!r.ok) continue; events=await r.json(); }catch(_){ continue; }
+      try{ const oe=await fetchOddsEvents(sp); if(oe.error) continue; events=oe.events; }catch(_){ continue; } // v8.6: cached
       const evByKey={};
       for(const ev of events){ evByKey[norm(ev.home_team)+"|"+norm(ev.away_team)]=ev; }
       const updates=[];
