@@ -1,4 +1,6 @@
-// Bahis Tahmin API v10.1 (backtest perf: mu lookup table, weekly refits, sparse rho grid)
+// Bahis Tahmin API v10.3 (API-Football injury signal: absent-player differential -> goal diff adj)
+// v10.2) per-league learned x12s via league_params + fit_blend log-loss stacking
+// v10.1) backtest perf: mu lookup table, weekly refits, sparse rho grid
 // v10) P1 walk-forward backtest; P2 median per-book devig; P3 full-archive rho MLE;
 //      P4 CLV-driven calibration; P5 team home advantage; P6 draw breakdown; P7 exposure cap.
 // v9.x) CSV source (T1 + SoT blend); DC ratings; rest; steam. v8.x/v7 in git history.
@@ -7,6 +9,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 const ODDS_KEY=Deno.env.get("ODDS_API_KEY")||"2fa7cd6c20d0b3f664a17e7425d1a0cf";
+const FOOTBALL_API_KEY=Deno.env.get("FOOTBALL_API_KEY")||""; // API-Football (api-sports.io); bos ise sakatlik sinyali kapali
 const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"59143b90947142dbaefeac579cd4d4ba";
 function sb(){ return createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")); }
 
@@ -77,6 +80,10 @@ const ODDS_CACHE_TTL_S=300;
 const REST_COEF=0.035;
 const STEAM_W=0.30;
 const DC_ITERS=12;
+const INJ_COEF=0.02;      // eksik oyuncu basina gol farki etkisi (muhafazakar)
+const INJ_CLAMP=0.12;     // toplam sakatlik duzeltmesi siniri
+const INJ_CACHE_TTL_S=21600; // 6 saat DB cache (100 istek/gun kotasini korur)
+const API_FOOTBALL_LEAGUE={ soccer_epl:39, soccer_spain_la_liga:140, soccer_italy_serie_a:135, soccer_germany_bundesliga:78, soccer_france_ligue_one:61, soccer_turkey_super_league:203, soccer_fifa_world_cup:1 };
 const WC_HOSTS=new Set(["usa","unitedstates","canada","mexico"]);
 function wcHomeBonus(home,away,bonus){
   const h=WC_HOSTS.has(norm(home)), a=WC_HOSTS.has(norm(away));
@@ -87,6 +94,47 @@ function wcHomeBonus(home,away,bonus){
 async function getParams(){
   try{ const {data,error}=await sb().rpc("bahis_get_active_params"); if(!error && data && data.length){ const p=data[0]; return { version:p.version, rho:+p.rho, edge_threshold_base:+p.edge_threshold_base, family_correction:+p.family_correction, recency_halflife_days:+p.recency_halflife_days, home_elo_bonus:+p.home_elo_bonus }; } }catch(_){}
   return DEFAULT_PARAMS;
+}
+// v10.2: per-league learned blend weight (x12s) from walk-forward log-loss fit
+let leagueParamsCache=null;
+async function getLeagueParams(){
+  if(leagueParamsCache && Date.now()-leagueParamsCache.t<3600000) return leagueParamsCache.v;
+  try{ const {data}=await sb().rpc("bahis_league_params"); const m={};
+    for(const r of (data||[])) m[r.sport]={ x12s:r.x12s==null?null:+r.x12s };
+    leagueParamsCache={t:Date.now(),v:m}; return m;
+  }catch(_){ return {}; }
+}
+
+// v10.3: API-Football injuries -> per-team "Missing Fixture" player count (DB-cached)
+async function fetchInjuries(sport){
+  if(!FOOTBALL_API_KEY) return null;
+  const lid=API_FOOTBALL_LEAGUE[sport]; if(!lid) return null;
+  const key="inj:"+sport;
+  try{ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:key,max_age_seconds:INJ_CACHE_TTL_S}); if(data) return data; }catch(_){}
+  const now=new Date(); const y=now.getUTCFullYear(), m=now.getUTCMonth()+1;
+  const season=(sport===WORLD_CUP_SPORT)? y : ((m>=7)? y : y-1);
+  try{
+    const r=await fetch(`https://v3.football.api-sports.io/injuries?league=${lid}&season=${season}`,{headers:{"x-apisports-key":FOOTBALL_API_KEY}});
+    if(!r.ok) return null;
+    const d=await r.json();
+    if(d.errors && Object.keys(d.errors).length) return null; // plan/kota hatasi -> sinyal kapali, cache yazma
+    const cnt={}; const seen={};
+    for(const row of (d.response||[])){
+      const p=row.player||{}, t=row.team||{};
+      if((p.type||"")!=="Missing Fixture") continue;
+      const tn=norm(t.name||""); if(!tn) continue;
+      const pk=tn+"|"+(p.id||p.name); if(seen[pk]) continue; seen[pk]=1;
+      cnt[tn]=(cnt[tn]||0)+1;
+    }
+    try{ await sb().rpc("bahis_set_odds_cache",{sp:key,p:cnt}); }catch(_){}
+    return cnt;
+  }catch(_){ return null; }
+}
+function injuryDiff(home,away,inj){
+  if(!inj) return {d:0,h:0,a:0};
+  const hk=findKey(home,inj), ak=findKey(away,inj);
+  const h=(hk!=null&&inj[hk])?inj[hk]:0, a=(ak!=null&&inj[ak])?inj[ak]:0;
+  return { d: Math.max(-INJ_CLAMP, Math.min(INJ_CLAMP, INJ_COEF*(a-h))), h, a };
 }
 
 const formCache={};
@@ -297,7 +345,7 @@ function buildConsensus(ev){
   return { pH,pD,pA,pOver,pOvers, odds:best, books:books.length };
 }
 
-function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={}){
+function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_PROB_SHRINK){
   const market=probs(mLh,mLa,rho);
   let mdLh,mdLa,source;
   if(indep){ mdLh=indep.lh; mdLa=indep.la; source=extra.__wc?"elo":"form"; }
@@ -305,7 +353,7 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={}){
   const model=probs(mdLh,mdLa,rho);
   const markets=MKID.map((m)=>{ let mod=model[m]; const mkt=market[m];
     if(source!=="market"){
-      const s=(FAMILY[m]==="ou"||FAMILY[m]==="btts")? GOAL_PROB_SHRINK : X12_PROB_SHRINK;
+      const s=(FAMILY[m]==="ou"||FAMILY[m]==="btts")? GOAL_PROB_SHRINK : x12s;
       mod=mkt+s*(mod-mkt);
     }
     const edge=mod-mkt,odd=odds[m]||null;
@@ -331,6 +379,9 @@ async function fetchOddsEvents(sport){
 
 async function fetchFixtures(sport){
   const params=await getParams();
+  const lpAll=await getLeagueParams();
+  const lp=lpAll[sport];
+  const x12s=(lp&&lp.x12s!=null)? lp.x12s : X12_PROB_SHRINK;
   const oe=await fetchOddsEvents(sport);
   if(oe.error) return { error:`Oran API hatası (${oe.error}).` };
   const events=oe.events;
@@ -342,6 +393,7 @@ async function fetchFixtures(sport){
   }
   const eloMap=isWC? await getEloMap() : null;
   const wcForm=isWC? await fetchWcForm(21) : null;
+  const inj=await fetchInjuries(sport);
   const out=[]; let formCount=0;
   for(const ev of events){
     if(ev.commence_time && new Date(ev.commence_time).getTime()<=Date.now()){
@@ -360,22 +412,25 @@ async function fetchFixtures(sport){
       if(o&&o.ph!=null){ const drift=cons.pH-(+o.ph); steamD=STEAM_W*Math.max(-0.5,Math.min(0.5,3*drift)); }
     }catch(_){}
     const matchTime=ev.commence_time? new Date(ev.commence_time).getTime() : null;
+    const injd=injuryDiff(ev.home_team,ev.away_team,inj);
+    const extraD=steamD+injd.d;
     let indep=null;
     if(isWC&&eloMap){
       const fd=wcFormDiff(ev.home_team,ev.away_team,wcForm,marketMu??FALLBACK_TOTAL_MU,matchTime);
       const bonus=wcHomeBonus(ev.home_team,ev.away_team,params.home_elo_bonus);
-      indep=eloLambdas(ev.home_team,ev.away_team,eloMap,bonus,params.rho,marketMu,fd?fd.d:null,steamD);
+      indep=eloLambdas(ev.home_team,ev.away_team,eloMap,bonus,params.rho,marketMu,fd?fd.d:null,extraD);
     }
-    else if(form){ indep=formLambdas(ev.home_team,ev.away_team,form,marketMu,matchTime,steamD); }
+    else if(form){ indep=formLambdas(ev.home_team,ev.away_team,form,marketMu,matchTime,extraD); }
     if(indep) formCount++;
     const threshold=params.edge_threshold_base*params.family_correction;
-    out.push(buildAuto(ev.home_team,ev.away_team,est.lh,est.la,cons.odds,indep,params.rho,threshold,
-      { commence:ev.commence_time, params_version:params.version, books_used:cons.books, __wc:isWC }));
+    const extra={ commence:ev.commence_time, params_version:params.version, books_used:cons.books, __wc:isWC };
+    if(inj&&(injd.h||injd.a)) extra.inj_out={home:injd.h,away:injd.a};
+    out.push(buildAuto(ev.home_team,ev.away_team,est.lh,est.la,cons.odds,indep,params.rho,threshold,extra,x12s));
   }
   const pk=out.filter(m=>m.pick&&m.pick.kelly_pct);
   const totK=pk.reduce((s,m)=>s+m.pick.kelly_pct,0);
   if(totK>15) for(const m of pk) m.pick.kelly_pct=+(m.pick.kelly_pct*15/totK).toFixed(1);
-  return { matches:out, count:out.length, form_count:formCount, params_version:params.version, edge_threshold_pct:+(params.edge_threshold_base*params.family_correction).toFixed(2) };
+  return { matches:out, count:out.length, form_count:formCount, params_version:params.version, league_x12s:x12s, injury_signal:!!inj, edge_threshold_pct:+(params.edge_threshold_base*params.family_correction).toFixed(2) };
 }
 
 async function savePreds(picks){ try{ const {data,error}=await sb().rpc("bahis_save_predictions",{p:picks}); if(error) return {ok:false,error:error.message}; return {ok:true,saved:data}; }catch(e){ return {ok:false,error:String(e)}; } }
@@ -565,6 +620,7 @@ async function backtest(body){
   const REFIT_MS=6.5*86400000; // weekly refits - ratings drift slowly
   let S=null,lastFit=-1;
   let bets=0,hits=0,flat=0,kellyBank=1,brK=0,brM=0,rpsK=0,rpsM=0,nn=0,xBets=0,xHits=0,xFlat=0,edgeSum=0;
+  const R=[]; // raw walk-forward (model,market,outcome) rows for fit_blend stacking
   for(let i=warm;i<raw.length;i++){ const r=raw[i];
     if(!r.oh||!r.od||!r.oa) continue;
     if(!S || r.t-lastFit>REFIT_MS){ S=fitUpTo(i,r.t); lastFit=r.t; }
@@ -582,6 +638,7 @@ async function backtest(body){
     const k1=mH+cfg.x12s*(pm.p1-mH), kX=mD+cfg.x12s*(pm.px-mD), k2=mA+cfg.x12s*(pm.p2-mA);
     const o=(r.gh>r.ga)?0:(r.gh===r.ga?1:2);
     const pv=[k1,kX,k2], mv=[mH,mD,mA]; nn++;
+    R.push({p1:pm.p1,px:pm.px,p2:pm.p2,mH,mD,mA,o});
     for(let j=0;j<3;j++){ brK+=Math.pow(pv[j]-(o===j?1:0),2)/3; brM+=Math.pow(mv[j]-(o===j?1:0),2)/3; }
     let cK=0,cM=0,cO=0;
     for(let j=0;j<3;j++){ cK+=pv[j]; cM+=mv[j]; cO+=(o===j?1:0); rpsK+=Math.pow(cK-cO,2)/2; rpsM+=Math.pow(cM-cO,2)/2; }
@@ -603,6 +660,14 @@ async function backtest(body){
     brier_model:+(brK/nn).toFixed(4), brier_market:+(brM/nn).toFixed(4),
     rps_model:+(rpsK/nn).toFixed(4), rps_market:+(rpsM/nn).toFixed(4),
     draw:{bets:xBets, hits:xHits, flat_roi:xBets? +(100*xFlat/xBets).toFixed(1):null} };
+  // v10.2 stacking: learn blend weight w (p = market + w*(model-market)) by out-of-sample log-loss
+  if(body.fit_blend){
+    const LL=(w)=>{ let s=0; for(const r of R){ const pp=[r.mH+w*(r.p1-r.mH), r.mD+w*(r.px-r.mD), r.mA+w*(r.p2-r.mA)][r.o]; s+=-Math.log(Math.max(1e-9,pp)); } return s/Math.max(1,R.length); };
+    let wBest=0,best=1e9; const curve=[];
+    for(let w=0;w<=1.201;w+=0.05){ const l=LL(w); curve.push({w:+w.toFixed(2),ll:+l.toFixed(5)}); if(l<best-1e-12){ best=l; wBest=+w.toFixed(2); } }
+    out.blend={ w_best:wBest, ll_market:+LL(0).toFixed(5), ll_w085:+LL(0.85).toFixed(5), ll_best:+best.toFixed(5), n:R.length };
+    if(body.curve) out.blend.curve=curve;
+  }
   if(body.skip_rho) return out;
   const Sf=fitUpTo(raw.length, raw[raw.length-1].t+86400000);
   let rhoBest=cfg.rho, ll0=-Infinity;
@@ -627,6 +692,16 @@ Deno.serve(async (req)=>{
     if(body.action==="capture_closing") return J(await captureClosing());
     if(body.action==="calibrate") return J(await calibrate());
     if(body.action==="backtest") return J(await backtest(body));
+    if(body.action==="inj_debug"){
+      if(!FOOTBALL_API_KEY) return J({key:false});
+      const lid=body.league||39, season=body.season||2025;
+      try{
+        const r=await fetch(`https://v3.football.api-sports.io/injuries?league=${lid}&season=${season}`,{headers:{"x-apisports-key":FOOTBALL_API_KEY}});
+        const d=await r.json().catch(()=>({}));
+        return J({key:true, status:r.status, results:d.results??null, errors:d.errors??null,
+          sample:(d.response||[]).slice(0,3).map((x)=>({team:x.team&&x.team.name, player:x.player&&x.player.name, type:x.player&&x.player.type}))});
+      }catch(e){ return J({key:true, fetch_error:String(e)}); }
+    }
     if(body.action==="params"){ return J(await getParams()); }
     if(body.action==="compute"){ const params=await getParams(); const threshold=params.edge_threshold_base*params.family_correction;
       const matches=(body.matches||[]).map((m)=>{ const lh=+m.lh||1.2,la=+m.la||1.0; const r=probs(lh,la,params.rho); const odds=m.odds||{};
