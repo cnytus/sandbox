@@ -50,6 +50,16 @@ const MKID=["1","X","2","O","U","BY","BN"];
 const MKN={ "1":"MS 1 (Ev)","X":"Beraberlik","2":"MS 2 (Dep)","O":"Üst 2.5","U":"Alt 2.5","BY":"KG Var","BN":"KG Yok" };
 const FAMILY={ "1":"1x2","X":"1x2","2":"1x2","O":"ou","U":"ou","BY":"btts","BN":"btts" };
 const COMP={ soccer_epl:"PL", soccer_spain_la_liga:"PD", soccer_italy_serie_a:"SA", soccer_germany_bundesliga:"BL1", soccer_france_ligue_one:"FL1" };
+// v9.1: football-data.co.uk CSV league codes - primary form source for leagues. Free, no key,
+// includes Turkey (T1) and shots-on-target columns (HST/AST) for the xG-proxy signal.
+const CSV_COMP={ soccer_epl:"E0", soccer_spain_la_liga:"SP1", soccer_italy_serie_a:"I1", soccer_germany_bundesliga:"D1", soccer_france_ligue_one:"F1", soccer_turkey_super_league:"T1" };
+// CSV team-name aliases -> Odds API canonical (normed both sides); substring matching in
+// findKey covers the rest (e.g. "Leeds" ~ "Leeds United").
+const CSV_ALIAS={ mancity:"manchestercity", manunited:"manchesterunited", nottmforest:"nottinghamforest", wolves:"wolverhamptonwanderers",
+  athmadrid:"atleticomadrid", athbilbao:"athleticbilbao", betis:"realbetis", sociedad:"realsociedad", celta:"celtavigo", espanol:"espanyol", vallecano:"rayovallecano",
+  mgladbach:"borussiamonchengladbach", einfrankfurt:"eintrachtfrankfurt", fckoln:"fccologne",
+  parissg:"parissaintgermain", stetienne:"saintetienne",
+  buyuksehyr:"istanbulbasaksehir" };
 const WORLD_CUP_SPORT="soccer_fifa_world_cup";
 
 // ---------- core Poisson / Dixon-Coles model ----------
@@ -113,6 +123,10 @@ const KELLY_FRACTION=0.25;    // quarter-Kelly
 const KELLY_CAP_PCT=5;        // max suggested bankroll % per pick
 const ELO_K_WC=50;            // World Cup K-factor (World Football Elo convention)
 const ODDS_CACHE_TTL_S=300;   // v8.6: odds served from DB cache for 5 min - saves API credits
+// v9 signal constants:
+const REST_COEF=0.035;        // goal-diff nudge per day of rest advantage (clamped +/-4 days)
+const STEAM_W=0.30;           // weight of opening->current market drift on the 1x2 split
+const DC_ITERS=12;            // iterations of the opponent-adjusted attack/defence fit
 // v8.2: 2026 WC is co-hosted by USA/Canada/Mexico. home_elo_bonus only applies when a host
 // nation actually plays in its own country; every other WC match is neutral-venue. If the
 // host is the odds-listed AWAY side it still gets the crowd edge (negative bonus on the diff).
@@ -145,32 +159,115 @@ async function fetchCompetitionForm(comp,halflife){
     return v;
   }catch(_){ return null; }
 }
+// v9: opponent-adjusted, time-weighted attack/defence ratings (Dixon-Coles skeleton via
+// iterative proportional fitting). Replaces the old per-team goal-ratio form model, which
+// ignored WHO the goals were scored against - a team feasting on weak schedules was
+// systematically over-rated. Also tracks each team's last match date (rest-days signal).
+// v9.1: league form from football-data.co.uk CSVs. Two research-backed upgrades over the
+// football-data.org path: (1) covers the Turkish Super Lig (T1), (2) has shots-on-target,
+// so team scoring rates are an xG-proxy BLEND of goals and SoT (SOT_W). Goals are noisy;
+// SoT repeats - the blend predicts future scoring better than raw goals alone.
+const SOT_W=0.35; // weight of the SoT-based expected-goals proxy vs actual goals
+async function fetchCsvForm(sport,halflife){
+  const code=CSV_COMP[sport]; if(!code) return null;
+  const key="CSV|"+code+"|"+halflife; const c=formCache[key]; if(c&&Date.now()-c.t<3600000) return c.v;
+  const now=new Date();
+  const y=now.getUTCFullYear(), m=now.getUTCMonth()+1;
+  const startY=(m>=7)? y : y-1; // seasons run Aug-May; Jul counts toward the upcoming one
+  const seasons=[ String(startY%100).padStart(2,"0")+String((startY+1)%100).padStart(2,"0"),
+                  String((startY-1)%100).padStart(2,"0")+String(startY%100).padStart(2,"0") ];
+  const raw=[];
+  for(const s of seasons){
+    try{
+      const r=await fetch(`https://www.football-data.co.uk/mmz4281/${s}/${code}.csv`);
+      if(!r.ok) continue;
+      const txt=await r.text();
+      const lines=txt.replace(/^﻿/,"").split(/\r?\n/); if(lines.length<2) continue;
+      const H=lines[0].split(","); const ix=(n)=>H.indexOf(n);
+      const iD=ix("Date"),iH=ix("HomeTeam"),iA=ix("AwayTeam"),iFH=ix("FTHG"),iFA=ix("FTAG"),iHS=ix("HST"),iAS=ix("AST");
+      if(iD<0||iH<0||iA<0||iFH<0||iFA<0) continue;
+      for(let li=1; li<lines.length; li++){
+        const cderiv=lines[li].split(","); if(cderiv.length<5) continue;
+        const dm=(cderiv[iD]||"").split("/"); if(dm.length!==3) continue;
+        let yy=+dm[2]; if(yy<100) yy+=2000;
+        const iso=`${yy}-${String(+dm[1]).padStart(2,"0")}-${String(+dm[0]).padStart(2,"0")}T15:00:00Z`;
+        const gh=+cderiv[iFH], ga=+cderiv[iFA]; if(isNaN(gh)||isNaN(ga)) continue;
+        const sh=iHS>=0? +cderiv[iHS] : NaN, sa=iAS>=0? +cderiv[iAS] : NaN;
+        raw.push({ h:(cderiv[iH]||"").trim(), a:(cderiv[iA]||"").trim(), gh, ga, sh:isNaN(sh)?null:sh, sa:isNaN(sa)?null:sa, iso });
+      }
+    }catch(_){}
+  }
+  if(raw.length<30) return null;
+  // league conversion rate: goals per shot on target (used to convert SoT into goal-equivalents)
+  let g=0,s=0; for(const r of raw){ if(r.sh!=null&&r.sa!=null){ g+=r.gh+r.ga; s+=r.sh+r.sa; } }
+  const conv=(s>50)? g/s : 0.30;
+  const alias=(name)=>{ const n=norm(name); return CSV_ALIAS[n]||n; };
+  const eff=(goals,sot)=> (sot==null)? goals : (1-SOT_W)*goals+SOT_W*conv*sot;
+  const matches=raw.map(r=>({ status:"FINISHED", utcDate:r.iso,
+    homeTeam:{name:alias(r.h)}, awayTeam:{name:alias(r.a)},
+    score:{fullTime:{home:eff(r.gh,r.sh), away:eff(r.ga,r.sa)}} }));
+  const v=buildRecencyForm(matches,halflife,now);
+  if(v) formCache[key]={t:Date.now(),v};
+  return v;
+}
 function buildRecencyForm(matches,halflife,now){
-  const home={},away={}; let thG=0,thW=0,taG=0,taW=0;
+  const rows=[]; const teams={}; let thG=0,thW=0,taG=0,taW=0; const lastMatch={};
   for(const m of matches){
     if(m.status!=="FINISHED") continue;
     const sc=m.score&&m.score.fullTime; if(!sc||sc.home==null||sc.away==null) continue;
-    const days=(now.getTime()-new Date(m.utcDate).getTime())/86400000; if(days<0) continue;
+    const md=new Date(m.utcDate).getTime();
+    const days=(now.getTime()-md)/86400000; if(days<0) continue;
     const w=Math.pow(0.5, days/halflife);
     const hn=norm(m.homeTeam&&m.homeTeam.name), an=norm(m.awayTeam&&m.awayTeam.name); if(!hn||!an) continue;
-    home[hn]=home[hn]||{gf:0,ga:0,w:0}; away[an]=away[an]||{gf:0,ga:0,w:0};
-    home[hn].gf+=sc.home*w; home[hn].ga+=sc.away*w; home[hn].w+=w;
-    away[an].gf+=sc.away*w; away[an].ga+=sc.home*w; away[an].w+=w;
+    rows.push({hn,an,gh:sc.home,ga:sc.away,w});
+    teams[hn]=1; teams[an]=1;
+    if(!lastMatch[hn]||md>lastMatch[hn]) lastMatch[hn]=md;
+    if(!lastMatch[an]||md>lastMatch[an]) lastMatch[an]=md;
     thG+=sc.home*w; thW+=w; taG+=sc.away*w; taW+=w;
   }
   if(thW<8||taW<8) return null;
-  return { home,away,avgHome:thG/thW,avgAway:taG/taW };
-}
-// v7: marketMu shrinks the form total toward the market total while keeping the form goal
-// DIFFERENCE (who is stronger). Form samples are noisy on scoring volume; the market isn't.
-function formLambdas(h0,a0,S,marketMu){ const hk=findKey(h0,S.home), ak=findKey(a0,S.away); if(!hk||!ak) return null; const h=S.home[hk],a=S.away[ak]; if(h.w<1||a.w<1) return null;
-  const attH=(h.gf/h.w)/S.avgHome, defA=(a.ga/a.w)/S.avgHome, attA=(a.gf/a.w)/S.avgAway, defH=(h.ga/h.w)/S.avgAway;
-  let lh=S.avgHome*attH*defA, la=S.avgAway*attA*defH;
-  if(marketMu!=null&&marketMu>0.6&&marketMu<7){
-    const d=lh-la, T=FORM_TOTAL_W*(lh+la)+(1-FORM_TOTAL_W)*marketMu;
-    lh=(T+d)/2; la=(T-d)/2;
+  const muH=thG/thW, muA=taG/taW, muM=(muH+muA)/2;
+  const att={}, def={}, wSum={};
+  for(const t in teams){ att[t]=1; def[t]=1; wSum[t]=0; }
+  for(const r of rows){ wSum[r.hn]+=r.w; wSum[r.an]+=r.w; }
+  for(let it=0; it<DC_ITERS; it++){
+    const gfN={},gfD={},gaN={},gaD={};
+    for(const t in teams){ gfN[t]=0; gfD[t]=1e-9; gaN[t]=0; gaD[t]=1e-9; }
+    for(const r of rows){
+      gfN[r.hn]+=r.w*r.gh; gfD[r.hn]+=r.w*muH*def[r.an];
+      gfN[r.an]+=r.w*r.ga; gfD[r.an]+=r.w*muA*def[r.hn];
+      gaN[r.hn]+=r.w*r.ga; gaD[r.hn]+=r.w*muA*att[r.an];
+      gaN[r.an]+=r.w*r.gh; gaD[r.an]+=r.w*muH*att[r.hn];
+    }
+    for(const t in teams){
+      // 2-match pseudo-count shrink toward 1: low-sample teams stay near league average
+      att[t]=(gfN[t]+2*muM)/(gfD[t]+2*muM);
+      def[t]=(gaN[t]+2*muM)/(gaD[t]+2*muM);
+      att[t]=Math.min(3,Math.max(0.3,att[t])); def[t]=Math.min(3,Math.max(0.3,def[t]));
+    }
   }
+  return { att, def, muH, muA, lastMatch, wSum };
+}
+// v9: lambdas from opponent-adjusted ratings; total still market-anchored (v7 principle);
+// goal difference additionally nudged by the rest-days (fixture congestion) signal.
+function formLambdas(h0,a0,S,marketMu,matchTime,extraD){
+  const hk=findKey(h0,S.att), ak=findKey(a0,S.att); if(!hk||!ak) return null;
+  if((S.wSum[hk]||0)<1||(S.wSum[ak]||0)<1) return null;
+  let lh=S.muH*S.att[hk]*S.def[ak], la=S.muA*S.att[ak]*S.def[hk];
+  let d=lh-la;
+  d+=restAdj(S.lastMatch[hk],S.lastMatch[ak],matchTime);
+  if(extraD) d+=extraD; // v9: steam (line-movement) nudge
+  const T0=(marketMu!=null&&marketMu>0.6&&marketMu<7)? FORM_TOTAL_W*(lh+la)+(1-FORM_TOTAL_W)*marketMu : lh+la;
+  lh=(T0+d)/2; la=(T0-d)/2;
   return { lh:Math.min(4.5,Math.max(0.15,lh)), la:Math.min(4.5,Math.max(0.15,la)) }; }
+// v9: rest-days signal - each extra day of rest vs the opponent is worth REST_COEF goals of
+// difference (clamped +/-4 days; >21-day gaps are season breaks, not fatigue - ignored).
+function restAdj(lastH,lastA,matchTime){
+  if(!lastH||!lastA||!matchTime) return 0;
+  const rH=(matchTime-lastH)/86400000, rA=(matchTime-lastA)/86400000;
+  if(rH<0||rA<0||rH>21||rA>21) return 0;
+  return REST_COEF*Math.max(-4,Math.min(4,rH-rA));
+}
 
 // ---------- v8: World Cup tournament form (finished WC matches, football-data.org) ----------
 // Per-team recency-weighted goals for/against across THIS tournament. Home/away split is
@@ -181,39 +278,25 @@ async function fetchWcForm(halflife){
     const r=await fetch(`https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED`,{headers:{"X-Auth-Token":FD_KEY}});
     if(!r.ok) return null;
     const d=await r.json(); if(!Array.isArray(d.matches)) return null;
-    const v=buildTournamentForm(d.matches,halflife,new Date());
+    // v9: same opponent-adjusted fitter as leagues (WC home/away designation is arbitrary,
+    // but muH~muA in the data so the shared fitter is fine)
+    const v=buildRecencyForm(d.matches,halflife,new Date());
     if(v) formCache[key]={t:Date.now(),v};
     return v;
   }catch(_){ return null; }
 }
-function buildTournamentForm(matches,halflife,now){
-  const T={}; let tg=0,tw=0;
-  for(const m of matches){
-    if(m.status!=="FINISHED") continue;
-    const sc=m.score&&m.score.fullTime; if(!sc||sc.home==null||sc.away==null) continue;
-    const days=(now.getTime()-new Date(m.utcDate).getTime())/86400000; if(days<0) continue;
-    const w=Math.pow(0.5, days/halflife);
-    const hn=norm(m.homeTeam&&m.homeTeam.name), an=norm(m.awayTeam&&m.awayTeam.name); if(!hn||!an) continue;
-    T[hn]=T[hn]||{gf:0,ga:0,w:0}; T[an]=T[an]||{gf:0,ga:0,w:0};
-    T[hn].gf+=sc.home*w; T[hn].ga+=sc.away*w; T[hn].w+=w;
-    T[an].gf+=sc.away*w; T[an].ga+=sc.home*w; T[an].w+=w;
-    tg+=(sc.home+sc.away)*w; tw+=2*w;
-  }
-  if(tw<8) return null;
-  return { teams:T, avg:tg/tw }; // avg = tournament goals per team per match
-}
-// Goal-difference implied by tournament form at total mu (attack*defense multiplicative model,
-// renormalized so the total stays exactly mu - only the SPLIT is form-informed).
-function wcFormDiff(h0,a0,F,mu){
-  if(!F) return null;
-  const hk=findKey(h0,F.teams), ak=findKey(a0,F.teams); if(!hk||!ak) return null;
-  const h=F.teams[hk], a=F.teams[ak]; if(h.w<0.8||a.w<0.8) return null;
-  const attH=(h.gf/h.w)/F.avg, defA=(a.ga/a.w)/F.avg, attA=(a.gf/a.w)/F.avg, defH=(h.ga/h.w)/F.avg;
-  let lh=attH*defA, la=attA*defH; const s=lh+la; if(s<=0) return null;
+// v9: goal-difference implied by opponent-adjusted tournament ratings at total mu, plus the
+// rest-days signal. Confidence scales with (decayed) matches played.
+function wcFormDiff(h0,a0,S,mu,matchTime){
+  if(!S) return null;
+  const hk=findKey(h0,S.att), ak=findKey(a0,S.att); if(!hk||!ak) return null;
+  if((S.wSum[hk]||0)<0.8||(S.wSum[ak]||0)<0.8) return null;
+  let lh=S.att[hk]*S.def[ak], la=S.att[ak]*S.def[hk]; const s=lh+la; if(s<=0) return null;
   lh=mu*lh/s; la=mu*la/s;
-  // confidence grows with matches played (w is a decayed match count)
-  const conf=Math.min(1,(h.w+a.w)/4);
-  return { d:(lh-la)*conf, conf };
+  const conf=Math.min(1,(S.wSum[hk]+S.wSum[ak])/4);
+  let d=(lh-la)*conf;
+  d+=restAdj(S.lastMatch[hk],S.lastMatch[ak],matchTime);
+  return { d, conf };
 }
 
 // ---------- World Cup independent model: national-team Elo (item 8) ----------
@@ -232,7 +315,7 @@ async function getEloMap(){
 // draw rates than the old drawP heuristic did. Also ~100x cheaper than the old 2-D grid.
 // v8: optional formD (tournament-form goal diff) is blended into the Elo-fitted diff with
 // weight WC_FORM_D_W - two independent signals on the same axis (who is stronger right now).
-function eloLambdas(home,away,map,homeBonus,rho,mu,formD){
+function eloLambdas(home,away,map,homeBonus,rho,mu,formD,extraD){
   const hk=findKey(home,map), ak=findKey(away,map); if(hk==null||ak==null) return null;
   const diff=(map[hk]+homeBonus)-map[ak];
   const We=1/(Math.pow(10,-diff/400)+1); // standard Elo win-expectancy = P(win) + 0.5*P(draw)
@@ -245,6 +328,7 @@ function eloLambdas(home,away,map,homeBonus,rho,mu,formD){
   for(let d=Math.max(-dMax,best.d-0.12); d<=Math.min(dMax,best.d+0.12); d+=0.02){ const e=err(d); if(e<best.err) best={d,err:e}; }
   let d=best.d;
   if(formD!=null&&isFinite(formD)) d=Math.max(-dMax,Math.min(dMax,(1-WC_FORM_D_W)*d+WC_FORM_D_W*formD));
+  if(extraD) d=Math.max(-dMax,Math.min(dMax,d+extraD)); // v9: steam / rest nudges
   return mk(d);
 }
 
@@ -336,7 +420,12 @@ async function fetchFixtures(sport){
   if(oe.error) return { error:`Oran API hatası (${oe.error}).` };
   const events=oe.events;
   const isWC=sport===WORLD_CUP_SPORT;
-  const form=(!isWC && COMP[sport])? await fetchCompetitionForm(COMP[sport],params.recency_halflife_days) : null;
+  // v9.1: CSV source (shots-enhanced, covers Turkey) is primary; football-data.org is fallback
+  let form=null;
+  if(!isWC){
+    if(CSV_COMP[sport]) form=await fetchCsvForm(sport,params.recency_halflife_days);
+    if(!form && COMP[sport]) form=await fetchCompetitionForm(COMP[sport],params.recency_halflife_days);
+  }
   const eloMap=isWC? await getEloMap() : null;
   const wcForm=isWC? await fetchWcForm(21) : null; // v8: short half-life - tournament form moves fast
   const out=[]; let formCount=0;
@@ -355,13 +444,23 @@ async function fetchFixtures(sport){
     // v7: market-implied total anchors the independent models' scoring environment.
     // est is fitted WITH the totals lines, so est.lh+est.la ~= the market's expected total goals.
     const marketMu=(cons.pOver!=null||cons.pOvers!=null)? est.lh+est.la : null;
+    // v9: line-movement (steam) signal. Opening consensus is recorded the first time an event
+    // is seen; drift toward one side since opening = informed money -> small goal-diff nudge.
+    let steamD=0;
+    try{
+      const key=norm(ev.home_team)+"|"+norm(ev.away_team)+"|"+String(ev.commence_time).slice(0,10);
+      const {data:op}=await sb().rpc("bahis_opening_odds",{p:[{key, sport, ph:cons.pH, pa:cons.pA, pover:cons.pOver}]});
+      const o=op&&op[key];
+      if(o&&o.ph!=null){ const drift=cons.pH-(+o.ph); steamD=STEAM_W*Math.max(-0.5,Math.min(0.5,3*drift)); }
+    }catch(_){}
+    const matchTime=ev.commence_time? new Date(ev.commence_time).getTime() : null;
     let indep=null;
     if(isWC&&eloMap){
-      const fd=wcFormDiff(ev.home_team,ev.away_team,wcForm,marketMu??FALLBACK_TOTAL_MU); // v8
-      const bonus=wcHomeBonus(ev.home_team,ev.away_team,params.home_elo_bonus);          // v8.2
-      indep=eloLambdas(ev.home_team,ev.away_team,eloMap,bonus,params.rho,marketMu,fd?fd.d:null);
+      const fd=wcFormDiff(ev.home_team,ev.away_team,wcForm,marketMu??FALLBACK_TOTAL_MU,matchTime); // v9: +rest
+      const bonus=wcHomeBonus(ev.home_team,ev.away_team,params.home_elo_bonus);                    // v8.2
+      indep=eloLambdas(ev.home_team,ev.away_team,eloMap,bonus,params.rho,marketMu,fd?fd.d:null,steamD);
     }
-    else if(form){ indep=formLambdas(ev.home_team,ev.away_team,form,marketMu); }
+    else if(form){ indep=formLambdas(ev.home_team,ev.away_team,form,marketMu,matchTime,steamD); }
     if(indep) formCount++;
     const threshold=params.edge_threshold_base*params.family_correction;
     out.push(buildAuto(ev.home_team,ev.away_team,est.lh,est.la,cons.odds,indep,params.rho,threshold,
