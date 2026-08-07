@@ -76,7 +76,7 @@ const WC_FORM_D_W=0.3;
 const KELLY_FRACTION=0.25;
 const KELLY_CAP_PCT=5;
 const ELO_K_WC=50;
-const ODDS_CACHE_TTL_S=300;
+const ODDS_CACHE_TTL_S=900; // 15 dk - aylik 500 krediyi korumak icin (eski: 300)
 const REST_COEF=0.035;
 const STEAM_W=0.30;
 const DC_ITERS=12;
@@ -681,6 +681,33 @@ async function backtest(body){
   return out;
 }
 
+// v10.4: sunucu tarafinda gunluk fis kaydi - site acilmasa da ogrenme dongusu veri alir
+async function autosave(){
+  const sports=Object.keys(CSV_COMP);
+  const detail={}; let total=0;
+  for(const sp of sports){
+    try{
+      const fx=await fetchFixtures(sp);
+      if(fx.error){ detail[sp]=fx.error; continue; }
+      const picks=[];
+      for(const m of (fx.matches||[])){
+        if(m.live||!m.pick||!m.pick.value||!m.commence) continue;
+        const dt=new Date(m.commence).getTime()-Date.now();
+        if(dt<=0||dt>8*86400000) continue;
+        picks.push({ sport:sp, home:m.home, away:m.away, match_date:String(m.commence).slice(0,10),
+          market:m.pick.code, family:m.pick.family, model_prob:m.pick.model/100, market_prob:m.pick.mkt/100,
+          edge_pct:m.pick.edge, odds:m.pick.odds, is_value:true, source:"autosave",
+          lambda_home:m.model_lh, lambda_away:m.model_la, params_version:m.params_version });
+      }
+      let saved=0;
+      if(picks.length){ const r=await savePreds(picks); saved=r.saved||0; }
+      detail[sp]={candidates:picks.length, saved};
+      total+=saved;
+    }catch(e){ detail[sp]=String(e); }
+  }
+  return { total_saved:total, detail };
+}
+
 Deno.serve(async (req)=>{
   if(req.method==="OPTIONS") return new Response("ok",{headers:CORS});
   if(req.method==="GET") return J({ ok:true, service:"bahis-tahmin API v10.1" });
@@ -689,6 +716,7 @@ Deno.serve(async (req)=>{
     if(body.action==="save") return J(await savePreds(body.picks||[]));
     if(body.action==="history") return J(await getHistory(body.sport));
     if(body.action==="settle") return J(await settle());
+    if(body.action==="autosave") return J(await autosave());
     if(body.action==="capture_closing") return J(await captureClosing());
     if(body.action==="calibrate") return J(await calibrate());
     if(body.action==="backtest") return J(await backtest(body));
