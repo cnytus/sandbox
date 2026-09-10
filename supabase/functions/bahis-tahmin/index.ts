@@ -32,7 +32,8 @@ const warn=(ctx,e)=>console.error(`[bahis-tahmin] ${ctx}:`, e instanceof Error ?
 const MKID=["1","X","2","O","U","BY","BN"];
 const MKN={ "1":"MS 1 (Ev)","X":"Beraberlik","2":"MS 2 (Dep)","O":"Üst 2.5","U":"Alt 2.5","BY":"KG Var","BN":"KG Yok" };
 const FAMILY={ "1":"1x2","X":"1x2","2":"1x2","O":"ou","U":"ou","BY":"btts","BN":"btts" };
-const COMP={ soccer_epl:"PL", soccer_spain_la_liga:"PD", soccer_italy_serie_a:"SA", soccer_germany_bundesliga:"BL1", soccer_france_ligue_one:"FL1" };
+// football-data.org kodlari (form yedegi; Sampiyonlar Ligi icin BIRINCIL kaynak - football-data.co.uk'de CL CSV'si yok)
+const COMP={ soccer_epl:"PL", soccer_spain_la_liga:"PD", soccer_italy_serie_a:"SA", soccer_germany_bundesliga:"BL1", soccer_france_ligue_one:"FL1", soccer_uefa_champs_league:"CL" };
 const CSV_COMP={ soccer_epl:"E0", soccer_spain_la_liga:"SP1", soccer_italy_serie_a:"I1", soccer_germany_bundesliga:"D1", soccer_france_ligue_one:"F1", soccer_turkey_super_league:"T1" };
 const CSV_ALIAS={ mancity:"manchestercity", manunited:"manchesterunited", nottmforest:"nottinghamforest", wolves:"wolverhamptonwanderers",
   athmadrid:"atleticomadrid", athbilbao:"athleticbilbao", betis:"realbetis", sociedad:"realsociedad", celta:"celtavigo", espanol:"espanyol", vallecano:"rayovallecano",
@@ -71,7 +72,9 @@ const DC_ITERS=12;
 const INJ_COEF=0.02;      // eksik oyuncu basina gol farki etkisi (muhafazakar)
 const INJ_CLAMP=0.12;     // toplam sakatlik duzeltmesi siniri
 const INJ_CACHE_TTL_S=21600; // 6 saat DB cache (100 istek/gun kotasini korur)
-const API_FOOTBALL_LEAGUE={ soccer_epl:39, soccer_spain_la_liga:140, soccer_italy_serie_a:135, soccer_germany_bundesliga:78, soccer_france_ligue_one:61, soccer_turkey_super_league:203, soccer_fifa_world_cup:1 };
+const API_FOOTBALL_LEAGUE={ soccer_epl:39, soccer_spain_la_liga:140, soccer_italy_serie_a:135, soccer_germany_bundesliga:78, soccer_france_ligue_one:61, soccer_turkey_super_league:203, soccer_uefa_champs_league:2, soccer_fifa_world_cup:1 };
+// autosave'in dolastigi ligler: CSV'li olanlar + yalniz football-data.org'lu olanlar (CL)
+const AUTOSAVE_SPORTS=[...new Set([...Object.keys(CSV_COMP), ...Object.keys(COMP)])];
 const WC_HOSTS=new Set(["usa","unitedstates","canada","mexico"]);
 function wcHomeBonus(home,away,bonus){
   const h=WC_HOSTS.has(norm(home)), a=WC_HOSTS.has(norm(away));
@@ -683,7 +686,7 @@ async function backtest(body){
 
 // v10.4: sunucu tarafinda gunluk fis kaydi - site acilmasa da ogrenme dongusu veri alir
 async function autosave(){
-  const sports=Object.keys(CSV_COMP);
+  const sports=AUTOSAVE_SPORTS;
   const detail={}; let total=0;
   for(const sp of sports){
     try{
