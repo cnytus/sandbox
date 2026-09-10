@@ -21,9 +21,12 @@ const FOOTBALL_API_KEY=Deno.env.get("FOOTBALL_API_KEY")||""; // API-Football (ap
 const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"";
 // Yazan / pahali action'lar (settle, calibrate, backtest, ...) bu header'i ister. pg_cron komutlari da gonderir.
 const ADMIN_KEY=Deno.env.get("BAHIS_ADMIN_KEY")||"";
-const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug"]);
+const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug"]);
 // FOOTBALL_DATA_KEY zorunlu degil (CSV birincil form kaynagi; FD yalniz yedek + Dunya Kupasi formu)
 const MISSING_ENV=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","ODDS_API_KEY"].filter((k)=>!Deno.env.get(k));
+// Tani: hangi secret'lar tanimli (degerler asla donmez)
+const ENV_PRESENT=Object.fromEntries(["ODDS_API_KEY","FOOTBALL_DATA_KEY","FOOTBALL_API_KEY","SPORTMONKS_API_KEY","BAHIS_ADMIN_KEY"].map((k)=>[k,!!Deno.env.get(k)]));
+const SPORTMONKS_KEY=Deno.env.get("SPORTMONKS_API_KEY")||"";
 const SB=createClient(Deno.env.get("SUPABASE_URL")||"", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||"");
 function sb(){ return SB; }
 // Yutulan hatalar Supabase log'unda gorunsun: hangi sinyalin (form/csv/elo/inj) sessizce dustugu belli olsun.
@@ -713,7 +716,7 @@ async function autosave(){
 
 Deno.serve(async (req)=>{
   if(req.method==="OPTIONS") return new Response("ok",{headers:CORS});
-  if(req.method==="GET") return J({ ok:MISSING_ENV.length===0, service:`bahis-tahmin API v${VERSION}`, missing_env:MISSING_ENV.length? MISSING_ENV : undefined });
+  if(req.method==="GET") return J({ ok:MISSING_ENV.length===0, service:`bahis-tahmin API v${VERSION}`, missing_env:MISSING_ENV.length? MISSING_ENV : undefined, env:ENV_PRESENT });
   if(req.method==="POST"){ let body={}; try{ body=await req.json(); }catch{ return J({error:"geçersiz JSON"},400); }
     if(MISSING_ENV.length) return J({ error:"eksik secret: "+MISSING_ENV.join(", ") },503);
     if(ADMIN_ACTIONS.has(body.action)){
@@ -736,6 +739,15 @@ Deno.serve(async (req)=>{
         const d=await r.json().catch(()=>({}));
         return J({key:true, status:r.status, results:d.results??null, errors:d.errors??null,
           sample:(d.response||[]).slice(0,3).map((x)=>({team:x.team&&x.team.name, player:x.player&&x.player.name, type:x.player&&x.player.type}))});
+      }catch(e){ return J({key:true, fetch_error:String(e)}); }
+    }
+    if(body.action==="sportmonks_debug"){ // plan kapsami: abonelikteki ligler (anahtar donmez)
+      const tok=SPORTMONKS_KEY||FOOTBALL_API_KEY; if(!tok) return J({key:false});
+      try{
+        const r=await fetch(`https://api.sportmonks.com/v3/football/leagues?per_page=50`,{headers:{"Authorization":tok}});
+        const d=await r.json().catch(()=>({}));
+        return J({ key:true, key_source:SPORTMONKS_KEY?"SPORTMONKS_API_KEY":"FOOTBALL_API_KEY", status:r.status, message:d.message??null,
+          leagues:(d.data||[]).map((l)=>({id:l.id,name:l.name,country_id:l.country_id})), subscription:d.subscription??null, rate_limit:d.rate_limit??null });
       }catch(e){ return J({key:true, fetch_error:String(e)}); }
     }
     if(body.action==="params"){ return J(await getParams()); }
