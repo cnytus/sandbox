@@ -21,7 +21,7 @@ const FOOTBALL_API_KEY=Deno.env.get("FOOTBALL_API_KEY")||""; // API-Football (ap
 const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"";
 // Yazan / pahali action'lar (settle, calibrate, backtest, ...) bu header'i ister. pg_cron komutlari da gonderir.
 const ADMIN_KEY=Deno.env.get("BAHIS_ADMIN_KEY")||"";
-const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug"]);
+const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug"]);
 // FOOTBALL_DATA_KEY zorunlu degil (CSV birincil form kaynagi; FD yalniz yedek + Dunya Kupasi formu)
 const MISSING_ENV=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","ODDS_API_KEY"].filter((k)=>!Deno.env.get(k));
 // Tani: hangi secret'lar tanimli (degerler asla donmez)
@@ -139,7 +139,7 @@ async function fetchCompetitionForm(comp,halflife){
     const urls=[ `https://api.football-data.org/v4/competitions/${comp}/matches?status=FINISHED`,
                  `https://api.football-data.org/v4/competitions/${comp}/matches?status=FINISHED&season=${y-1}` ];
     let all=[];
-    for(const u of urls){ try{ const r=await fetch(u,{headers:{"X-Auth-Token":FD_KEY}}); if(r.ok){ const d=await r.json(); if(Array.isArray(d.matches)) all=all.concat(d.matches); } else warn(`fetchCompetitionForm ${comp} HTTP`,r.status); }catch(e){ warn(`fetchCompetitionForm ${comp}`,e); } }
+    for(const u of urls){ try{ const r=await fetch(u,{headers:{"X-Auth-Token":FD_KEY}}); if(r.ok){ const d=await r.json(); if(Array.isArray(d.matches)) all=all.concat(d.matches); } else warn(`fetchCompetitionForm ${comp} HTTP ${r.status}`,(await r.text().catch(()=>"")).slice(0,160)); }catch(e){ warn(`fetchCompetitionForm ${comp}`,e); } }
     const v=buildRecencyForm(all,halflife,now);
     if(v) formCache[key]={t:Date.now(),v}; else warn(`fetchCompetitionForm ${comp}`,"yetersiz mac -> form yok");
     return v;
@@ -740,6 +740,17 @@ Deno.serve(async (req)=>{
         return J({key:true, status:r.status, results:d.results??null, errors:d.errors??null,
           sample:(d.response||[]).slice(0,3).map((x)=>({team:x.team&&x.team.name, player:x.player&&x.player.name, type:x.player&&x.player.type}))});
       }catch(e){ return J({key:true, fetch_error:String(e)}); }
+    }
+    if(body.action==="fd_debug"){ // football-data.org anahtar/plan tanisi (anahtar donmez)
+      if(!FD_KEY) return J({key:false});
+      const out={key:true, key_len:FD_KEY.length};
+      for(const comp of (body.comps||["CL","PL"])){
+        try{ const r=await fetch(`https://api.football-data.org/v4/competitions/${comp}/matches?status=FINISHED`,{headers:{"X-Auth-Token":FD_KEY}});
+          const txt=await r.text(); let n=null; try{ n=(JSON.parse(txt).matches||[]).length; }catch(_){}
+          out[comp]={status:r.status, matches:n, body:n==null? txt.slice(0,200) : undefined};
+        }catch(e){ out[comp]={fetch_error:String(e)}; }
+      }
+      return J(out);
     }
     if(body.action==="sportmonks_debug"){ // plan kapsami: abonelikteki ligler (anahtar donmez)
       const tok=SPORTMONKS_KEY||FOOTBALL_API_KEY; if(!tok) return J({key:false});
