@@ -1,22 +1,42 @@
-// Bahis Tahmin API v10.3 (API-Football injury signal: absent-player differential -> goal diff adj)
+// Bahis Tahmin API - surum: VERSION sabiti (asagida). Degisiklik gecmisi:
+// v10.5) hardening: env anahtarlari zorunlu (fallback yok), admin action'lar x-admin-key ister,
+//        tek supabase client, saf matematik model.ts'e (deno test), findKey/findPair tek-aday kurali,
+//        yutulan hatalar console.error, opening_odds tek RPC, fixtures cevabina rho eklendi.
+// v10.4) autosave (sunucu tarafi gunluk fis kaydi)
+// v10.3) API-Football injury signal: absent-player differential -> goal diff adj
 // v10.2) per-league learned x12s via league_params + fit_blend log-loss stacking
 // v10.1) backtest perf: mu lookup table, weekly refits, sparse rho grid
 // v10) P1 walk-forward backtest; P2 median per-book devig; P3 full-archive rho MLE;
 //      P4 CLV-driven calibration; P5 team home advantage; P6 draw breakdown; P7 exposure cap.
 // v9.x) CSV source (T1 + SoT blend); DC ratings; rest; steam. v8.x/v7 in git history.
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt } from "./model.ts";
 
-const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
+const VERSION="10.5";
+const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
-const ODDS_KEY=Deno.env.get("ODDS_API_KEY")||"2fa7cd6c20d0b3f664a17e7425d1a0cf";
+// Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
+const ODDS_KEY=Deno.env.get("ODDS_API_KEY")||"";
 const FOOTBALL_API_KEY=Deno.env.get("FOOTBALL_API_KEY")||""; // API-Football (api-sports.io); bos ise sakatlik sinyali kapali
-const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"59143b90947142dbaefeac579cd4d4ba";
-function sb(){ return createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")); }
+const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"";
+// Yazan / pahali action'lar (settle, calibrate, backtest, ...) bu header'i ister. pg_cron komutlari da gonderir.
+const ADMIN_KEY=Deno.env.get("BAHIS_ADMIN_KEY")||"";
+const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug"]);
+// FOOTBALL_DATA_KEY zorunlu degil (CSV birincil form kaynagi; FD yalniz yedek + Dunya Kupasi formu)
+const MISSING_ENV=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","ODDS_API_KEY"].filter((k)=>!Deno.env.get(k));
+// Tani: hangi secret'lar tanimli (degerler asla donmez)
+const ENV_PRESENT=Object.fromEntries(["ODDS_API_KEY","FOOTBALL_DATA_KEY","FOOTBALL_API_KEY","SPORTMONKS_API_KEY","BAHIS_ADMIN_KEY"].map((k)=>[k,!!Deno.env.get(k)]));
+const SPORTMONKS_KEY=Deno.env.get("SPORTMONKS_API_KEY")||"";
+const SB=createClient(Deno.env.get("SUPABASE_URL")||"", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||"");
+function sb(){ return SB; }
+// Yutulan hatalar Supabase log'unda gorunsun: hangi sinyalin (form/csv/elo/inj) sessizce dustugu belli olsun.
+const warn=(ctx,e)=>console.error(`[bahis-tahmin] ${ctx}:`, e instanceof Error ? e.message : String(e));
 
 const MKID=["1","X","2","O","U","BY","BN"];
 const MKN={ "1":"MS 1 (Ev)","X":"Beraberlik","2":"MS 2 (Dep)","O":"Üst 2.5","U":"Alt 2.5","BY":"KG Var","BN":"KG Yok" };
 const FAMILY={ "1":"1x2","X":"1x2","2":"1x2","O":"ou","U":"ou","BY":"btts","BN":"btts" };
-const COMP={ soccer_epl:"PL", soccer_spain_la_liga:"PD", soccer_italy_serie_a:"SA", soccer_germany_bundesliga:"BL1", soccer_france_ligue_one:"FL1" };
+// football-data.org kodlari (form yedegi; Sampiyonlar Ligi icin BIRINCIL kaynak - football-data.co.uk'de CL CSV'si yok)
+const COMP={ soccer_epl:"PL", soccer_spain_la_liga:"PD", soccer_italy_serie_a:"SA", soccer_germany_bundesliga:"BL1", soccer_france_ligue_one:"FL1", soccer_uefa_champs_league:"CL" };
 const CSV_COMP={ soccer_epl:"E0", soccer_spain_la_liga:"SP1", soccer_italy_serie_a:"I1", soccer_germany_bundesliga:"D1", soccer_france_ligue_one:"F1", soccer_turkey_super_league:"T1" };
 const CSV_ALIAS={ mancity:"manchestercity", manunited:"manchesterunited", nottmforest:"nottinghamforest", wolves:"wolverhamptonwanderers",
   athmadrid:"atleticomadrid", athbilbao:"athleticbilbao", betis:"realbetis", sociedad:"realsociedad", celta:"celtavigo", espanol:"espanyol", vallecano:"rayovallecano",
@@ -25,18 +45,6 @@ const CSV_ALIAS={ mancity:"manchestercity", manunited:"manchesterunited", nottmf
   buyuksehyr:"istanbulbasaksehir" };
 const WORLD_CUP_SPORT="soccer_fifa_world_cup";
 
-function poisson(k,l){ let f=1; for(let i=2;i<=k;i++) f*=i; return Math.exp(-l)*Math.pow(l,k)/f; }
-function dc(i,j,lh,la,rho){ if(i===0&&j===0)return 1-lh*la*rho; if(i===0&&j===1)return 1+lh*rho; if(i===1&&j===0)return 1+la*rho; if(i===1&&j===1)return 1-rho; return 1; }
-function probs(lh,la,rho){ const mx=8; const cells=[]; let tot=0;
-  for(let i=0;i<mx;i++) for(let j=0;j<mx;j++){ let p=poisson(i,lh)*poisson(j,la); if(i<2&&j<2)p*=dc(i,j,lh,la,rho); cells.push({i,j,p}); tot+=p; }
-  let ph=0,pd=0,pa=0,o=0,o15=0,o35=0,by=0; const grid=[];
-  for(const c of cells){ const p=c.p/tot; if(c.i>c.j)ph+=p; else if(c.i===c.j)pd+=p; else pa+=p; const t=c.i+c.j; if(t>2.5)o+=p; if(t>1.5)o15+=p; if(t>3.5)o35+=p; if(c.i>=1&&c.j>=1)by+=p; grid.push({s:c.i+"-"+c.j,p}); }
-  grid.sort((a,b)=>b.p-a.p); return { "1":ph,"X":pd,"2":pa,"O":o,"U":1-o,"O15":o15,"O35":o35,"BY":by,"BN":1-by, top:grid.slice(0,4) }; }
-// perf: lean 1x2+O probabilities without allocations/sort - used in backtest hot loops
-function probsLite(lh,la,rho){ let ph=0,pd=0,pa=0,o=0;
-  for(let i=0;i<8;i++){ const pi=poisson(i,lh); for(let j=0;j<8;j++){ let p=pi*poisson(j,la); if(i<2&&j<2)p*=dc(i,j,lh,la,rho);
-    if(i>j)ph+=p; else if(i===j)pd+=p; else pa+=p; if(i+j>2.5)o+=p; } }
-  const tot=ph+pd+pa; return { p1:ph/tot, px:pd/tot, p2:pa/tot, o:o/tot }; }
 function estimateLambdas(pH,pA,pOver,rho){
   const lines=(pOver!=null&&typeof pOver==="object")? pOver : (pOver!=null? {"2.5":pOver} : null);
   const LKEY={"1.5":"O15","2.5":"O","3.5":"O35"};
@@ -50,22 +58,6 @@ function estimateLambdas(pH,pA,pOver,rho){
   for(let lh=loLh;lh<=hiLh;lh+=0.02) for(let la=loLa;la<=hiLa;la+=0.02){ const e=err(lh,la); if(e<best.err) best={lh,la,err:e}; }
   return best; }
 function marketAdj(lh,la){ const mu=lh+la,diff=lh-la; return { lh:Math.max(0.05,(mu*0.9+2.6*0.1+diff*0.82)/2), la:Math.max(0.05,(mu*0.9+2.6*0.1-diff*0.82)/2) }; }
-
-function shinDevig(rawProbs){
-  const S=rawProbs.reduce((a,b)=>a+b,0);
-  if(S<=1) return rawProbs.map(p=>p/S);
-  const f=(z)=>{ let s=0; for(const pi of rawProbs){ const inner=Math.max(0, z*z+4*(1-z)*pi*pi/S); s += (Math.sqrt(inner)-z)/(2*(1-z)); } return s-1; };
-  let lo=0, hi=0.4, flo=f(lo), fhi=f(hi), tries=0;
-  while(fhi>0 && hi<0.49 && tries<20){ hi+=0.02; fhi=f(hi); tries++; }
-  for(let i=0;i<60;i++){ const mid=(lo+hi)/2, fm=f(mid); if(Math.abs(fm)<1e-9){ lo=hi=mid; break;} if((fm>0)===(flo>0)){ lo=mid; flo=fm; } else { hi=mid; fhi=fm; } }
-  const z=(lo+hi)/2;
-  return rawProbs.map(pi=> (Math.sqrt(Math.max(0,z*z+4*(1-z)*pi*pi/S))-z)/(2*(1-z)) );
-}
-const avg=(a)=>a.reduce((x,y)=>x+y,0)/a.length;
-const median=(a)=>{ if(!a.length) return null; const s=[...a].sort((x,y)=>x-y); const m=s.length>>1; return s.length%2? s[m] : (s[m-1]+s[m])/2; };
-
-const norm=(s)=> (s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/\b(fc|afc|cf|sc|ac|cd|ssc|bk|club)\b/g,"").replace(/[^a-z0-9]/g,"");
-function findKey(name,map){ const n=norm(name); if(map[n]!=null)return n; for(const k in map){ if(k.length>2&&(k.includes(n)||n.includes(k))) return k; } return null; }
 
 const DEFAULT_PARAMS={ version:1, rho:-0.12, edge_threshold_base:5, family_correction:1.73, recency_halflife_days:45, home_elo_bonus:60 };
 const FORM_TOTAL_W=0.35;
@@ -83,7 +75,9 @@ const DC_ITERS=12;
 const INJ_COEF=0.02;      // eksik oyuncu basina gol farki etkisi (muhafazakar)
 const INJ_CLAMP=0.12;     // toplam sakatlik duzeltmesi siniri
 const INJ_CACHE_TTL_S=21600; // 6 saat DB cache (100 istek/gun kotasini korur)
-const API_FOOTBALL_LEAGUE={ soccer_epl:39, soccer_spain_la_liga:140, soccer_italy_serie_a:135, soccer_germany_bundesliga:78, soccer_france_ligue_one:61, soccer_turkey_super_league:203, soccer_fifa_world_cup:1 };
+const API_FOOTBALL_LEAGUE={ soccer_epl:39, soccer_spain_la_liga:140, soccer_italy_serie_a:135, soccer_germany_bundesliga:78, soccer_france_ligue_one:61, soccer_turkey_super_league:203, soccer_uefa_champs_league:2, soccer_fifa_world_cup:1 };
+// autosave'in dolastigi ligler: CSV'li olanlar + yalniz football-data.org'lu olanlar (CL)
+const AUTOSAVE_SPORTS=[...new Set([...Object.keys(CSV_COMP), ...Object.keys(COMP)])];
 const WC_HOSTS=new Set(["usa","unitedstates","canada","mexico"]);
 function wcHomeBonus(home,away,bonus){
   const h=WC_HOSTS.has(norm(home)), a=WC_HOSTS.has(norm(away));
@@ -92,7 +86,7 @@ function wcHomeBonus(home,away,bonus){
   return 0;
 }
 async function getParams(){
-  try{ const {data,error}=await sb().rpc("bahis_get_active_params"); if(!error && data && data.length){ const p=data[0]; return { version:p.version, rho:+p.rho, edge_threshold_base:+p.edge_threshold_base, family_correction:+p.family_correction, recency_halflife_days:+p.recency_halflife_days, home_elo_bonus:+p.home_elo_bonus }; } }catch(_){}
+  try{ const {data,error}=await sb().rpc("bahis_get_active_params"); if(error) throw error; if(data && data.length){ const p=data[0]; return { version:p.version, rho:+p.rho, edge_threshold_base:+p.edge_threshold_base, family_correction:+p.family_correction, recency_halflife_days:+p.recency_halflife_days, home_elo_bonus:+p.home_elo_bonus }; } }catch(e){ warn("getParams -> DEFAULT_PARAMS",e); }
   return DEFAULT_PARAMS;
 }
 // v10.2: per-league learned blend weight (x12s) from walk-forward log-loss fit
@@ -102,7 +96,7 @@ async function getLeagueParams(){
   try{ const {data}=await sb().rpc("bahis_league_params"); const m={};
     for(const r of (data||[])) m[r.sport]={ x12s:r.x12s==null?null:+r.x12s };
     leagueParamsCache={t:Date.now(),v:m}; return m;
-  }catch(_){ return {}; }
+  }catch(e){ warn("getLeagueParams",e); return {}; }
 }
 
 // v10.3: API-Football injuries -> per-team "Missing Fixture" player count (DB-cached)
@@ -126,9 +120,9 @@ async function fetchInjuries(sport){
       const pk=tn+"|"+(p.id||p.name); if(seen[pk]) continue; seen[pk]=1;
       cnt[tn]=(cnt[tn]||0)+1;
     }
-    try{ await sb().rpc("bahis_set_odds_cache",{sp:key,p:cnt}); }catch(_){}
+    try{ await sb().rpc("bahis_set_odds_cache",{sp:key,p:cnt}); }catch(e){ warn("fetchInjuries cache write",e); }
     return cnt;
-  }catch(_){ return null; }
+  }catch(e){ warn("fetchInjuries",e); return null; }
 }
 function injuryDiff(home,away,inj){
   if(!inj) return {d:0,h:0,a:0};
@@ -145,11 +139,11 @@ async function fetchCompetitionForm(comp,halflife){
     const urls=[ `https://api.football-data.org/v4/competitions/${comp}/matches?status=FINISHED`,
                  `https://api.football-data.org/v4/competitions/${comp}/matches?status=FINISHED&season=${y-1}` ];
     let all=[];
-    for(const u of urls){ try{ const r=await fetch(u,{headers:{"X-Auth-Token":FD_KEY}}); if(r.ok){ const d=await r.json(); if(Array.isArray(d.matches)) all=all.concat(d.matches); } }catch(_){} }
+    for(const u of urls){ try{ const r=await fetch(u,{headers:{"X-Auth-Token":FD_KEY}}); if(r.ok){ const d=await r.json(); if(Array.isArray(d.matches)) all=all.concat(d.matches); } else warn(`fetchCompetitionForm ${comp} HTTP`,r.status); }catch(e){ warn(`fetchCompetitionForm ${comp}`,e); } }
     const v=buildRecencyForm(all,halflife,now);
-    if(v) formCache[key]={t:Date.now(),v};
+    if(v) formCache[key]={t:Date.now(),v}; else warn(`fetchCompetitionForm ${comp}`,"yetersiz mac -> form yok");
     return v;
-  }catch(_){ return null; }
+  }catch(e){ warn("fetchCompetitionForm",e); return null; }
 }
 const SOT_W=0.35;
 async function fetchCsvForm(sport,halflife){
@@ -179,9 +173,9 @@ async function fetchCsvForm(sport,halflife){
         const sh=iHS>=0? +cells[iHS] : NaN, sa=iAS>=0? +cells[iAS] : NaN;
         raw.push({ h:(cells[iH]||"").trim(), a:(cells[iA]||"").trim(), gh, ga, sh:isNaN(sh)?null:sh, sa:isNaN(sa)?null:sa, iso });
       }
-    }catch(_){}
+    }catch(e){ warn(`fetchCsvForm ${code}/${s}`,e); }
   }
-  if(raw.length<30) return null;
+  if(raw.length<30){ warn(`fetchCsvForm ${code}`,`yalniz ${raw.length} satir -> form yok`); return null; }
   let g=0,s2=0; for(const r of raw){ if(r.sh!=null&&r.sa!=null){ g+=r.gh+r.ga; s2+=r.sh+r.sa; } }
   const conv=(s2>50)? g/s2 : 0.30;
   const alias=(name)=>{ const n=norm(name); return CSV_ALIAS[n]||n; };
@@ -261,7 +255,7 @@ async function fetchWcForm(halflife){
     const v=buildRecencyForm(d.matches,halflife,new Date());
     if(v) formCache[key]={t:Date.now(),v};
     return v;
-  }catch(_){ return null; }
+  }catch(e){ warn("fetchWcForm",e); return null; }
 }
 function wcFormDiff(h0,a0,S,mu,matchTime){
   if(!S) return null;
@@ -276,10 +270,10 @@ function wcFormDiff(h0,a0,S,mu,matchTime){
 }
 
 async function getEloMap(){
-  try{ const {data,error}=await sb().rpc("bahis_all_elo"); if(error||!data) return null;
+  try{ const {data,error}=await sb().rpc("bahis_all_elo"); if(error) throw error; if(!data) return null;
     const map={}; for(const r of data) map[norm(r.team_name)]=+r.elo;
     return Object.keys(map).length? map : null;
-  }catch(_){ return null; }
+  }catch(e){ warn("getEloMap",e); return null; }
 }
 function eloLambdas(home,away,map,homeBonus,rho,mu,formD,extraD){
   const hk=findKey(home,map), ak=findKey(away,map); if(hk==null||ak==null) return null;
@@ -369,11 +363,11 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_
 }
 
 async function fetchOddsEvents(sport){
-  try{ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:sport,max_age_seconds:ODDS_CACHE_TTL_S}); if(data) return { events:data, cached:true }; }catch(_){}
+  try{ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:sport,max_age_seconds:ODDS_CACHE_TTL_S}); if(data) return { events:data, cached:true }; }catch(e){ warn("odds cache read",e); }
   const res=await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=h2h,totals&oddsFormat=decimal`);
-  if(!res.ok) return { error:res.status };
+  if(!res.ok){ warn(`odds API ${sport} HTTP`,res.status); return { error:res.status }; }
   const events=await res.json();
-  try{ await sb().rpc("bahis_set_odds_cache",{sp:sport,p:events}); }catch(_){}
+  try{ await sb().rpc("bahis_set_odds_cache",{sp:sport,p:events}); }catch(e){ warn("odds cache write",e); }
   return { events, cached:false };
 }
 
@@ -395,22 +389,30 @@ async function fetchFixtures(sport){
   const wcForm=isWC? await fetchWcForm(21) : null;
   const inj=await fetchInjuries(sport);
   const out=[]; let formCount=0;
+  const evKey=(ev)=>norm(ev.home_team)+"|"+norm(ev.away_team)+"|"+String(ev.commence_time).slice(0,10);
+  // 1. gecis: konsensus; 2. adim: acilis oranlarini TEK RPC ile al/yaz (eski: mac basina 1 RPC)
+  const pre=[];
   for(const ev of events){
-    if(ev.commence_time && new Date(ev.commence_time).getTime()<=Date.now()){
+    if(ev.commence_time && new Date(ev.commence_time).getTime()<=Date.now()){ pre.push({ev,live:true}); continue; }
+    const cons=buildConsensus(ev);
+    if(cons.pH==null||cons.pA==null) continue;
+    pre.push({ev,cons,key:evKey(ev)});
+  }
+  let opening={};
+  try{
+    const p=pre.filter(x=>x.cons).map(x=>({key:x.key, sport, ph:x.cons.pH, pa:x.cons.pA, pover:x.cons.pOver}));
+    if(p.length){ const {data:op,error}=await sb().rpc("bahis_opening_odds",{p}); if(error) throw error; opening=op||{}; }
+  }catch(e){ warn("bahis_opening_odds",e); }
+  for(const {ev,cons,key,live} of pre){
+    if(live){
       out.push({ home:ev.home_team, away:ev.away_team, commence:ev.commence_time, live:true, model_lh:0, model_la:0, markets:[], pick:null, source:"live" });
       continue;
     }
-    const cons=buildConsensus(ev);
-    if(cons.pH==null||cons.pA==null) continue;
     const est=estimateLambdas(cons.pH,cons.pA,cons.pOvers||cons.pOver,params.rho);
     const marketMu=(cons.pOver!=null||cons.pOvers!=null)? est.lh+est.la : null;
     let steamD=0;
-    try{
-      const key=norm(ev.home_team)+"|"+norm(ev.away_team)+"|"+String(ev.commence_time).slice(0,10);
-      const {data:op}=await sb().rpc("bahis_opening_odds",{p:[{key, sport, ph:cons.pH, pa:cons.pA, pover:cons.pOver}]});
-      const o=op&&op[key];
-      if(o&&o.ph!=null){ const drift=cons.pH-(+o.ph); steamD=STEAM_W*Math.max(-0.5,Math.min(0.5,3*drift)); }
-    }catch(_){}
+    const o=opening[key];
+    if(o&&o.ph!=null){ const drift=cons.pH-(+o.ph); steamD=STEAM_W*Math.max(-0.5,Math.min(0.5,3*drift)); }
     const matchTime=ev.commence_time? new Date(ev.commence_time).getTime() : null;
     const injd=injuryDiff(ev.home_team,ev.away_team,inj);
     const extraD=steamD+injd.d;
@@ -430,20 +432,19 @@ async function fetchFixtures(sport){
   const pk=out.filter(m=>m.pick&&m.pick.kelly_pct);
   const totK=pk.reduce((s,m)=>s+m.pick.kelly_pct,0);
   if(totK>15) for(const m of pk) m.pick.kelly_pct=+(m.pick.kelly_pct*15/totK).toFixed(1);
-  return { matches:out, count:out.length, form_count:formCount, params_version:params.version, league_x12s:x12s, injury_signal:!!inj, edge_threshold_pct:+(params.edge_threshold_base*params.family_correction).toFixed(2) };
+  return { matches:out, count:out.length, form_count:formCount, params_version:params.version, rho:params.rho, league_x12s:x12s, injury_signal:!!inj, edge_threshold_pct:+(params.edge_threshold_base*params.family_correction).toFixed(2) };
 }
 
 async function savePreds(picks){ try{ const {data,error}=await sb().rpc("bahis_save_predictions",{p:picks}); if(error) return {ok:false,error:error.message}; return {ok:true,saved:data}; }catch(e){ return {ok:false,error:String(e)}; } }
 async function getHistory(sport){ try{ const {data,error}=await sb().rpc("bahis_history",{lim:300,sp:sport||null}); if(error) return {error:error.message}; return {rows:data}; }catch(e){ return {error:String(e)}; } }
-function evalMkt(code,hs,as){ const tot=hs+as; switch(code){ case"1":return hs>as; case"X":return hs===as; case"2":return as>hs; case"O":return tot>2.5; case"U":return tot<2.5; case"BY":return hs>=1&&as>=1; case"BN":return !(hs>=1&&as>=1);} return false; }
 async function settle(){ try{
   const {data:pend,error}=await sb().rpc("bahis_pending"); if(error) return {error:error.message}; if(!pend||!pend.length) return {settled:0};
   const bySport={}; for(const r of pend){ const sp=r.sport||""; (bySport[sp]=bySport[sp]||[]).push(r); }
   const updates=[]; const wcSettled={};
   for(const sp in bySport){ if(!sp) continue;
-    let games; try{ const sr=await fetch(`https://api.the-odds-api.com/v4/sports/${sp}/scores/?daysFrom=3&apiKey=${ODDS_KEY}`); if(!sr.ok) continue; games=await sr.json(); }catch(_){ continue; }
+    let games; try{ const sr=await fetch(`https://api.the-odds-api.com/v4/sports/${sp}/scores/?daysFrom=3&apiKey=${ODDS_KEY}`); if(!sr.ok){ warn(`settle scores ${sp} HTTP`,sr.status); continue; } games=await sr.json(); }catch(e){ warn(`settle scores ${sp}`,e); continue; }
     const done={}; for(const g of (games||[])){ if(g.completed&&g.scores){ const hs=Number(g.scores.find((s)=>s.name===g.home_team)?.score); const as=Number(g.scores.find((s)=>s.name===g.away_team)?.score); if(!isNaN(hs)&&!isNaN(as)) done[norm(g.home_team)+"|"+norm(g.away_team)]={hs,as,home:g.home_team,away:g.away_team}; } }
-    for(const r of bySport[sp]){ let key=norm(r.home)+"|"+norm(r.away); let sc=done[key]; if(!sc){ for(const k in done){ const [h,a]=k.split("|"); if((h.includes(norm(r.home))||norm(r.home).includes(h))&&(a.includes(norm(r.away))||norm(r.away).includes(a))){ sc=done[k]; break; } } } if(!sc) continue;
+    for(const r of bySport[sp]){ const key=findPair(r.home,r.away,done); const sc=key? done[key] : null; if(!sc) continue;
       if(sp===WORLD_CUP_SPORT) wcSettled[norm(sc.home)+"|"+norm(sc.away)]=sc;
       updates.push({id:r.id, actual_score:sc.hs+"-"+sc.as, result: evalMkt(r.market,sc.hs,sc.as)?"hit":"miss"}); } }
   if(updates.length){ const {data,error:e2}=await sb().rpc("bahis_set_results",{p:updates}); if(e2) return {error:e2.message};
@@ -456,7 +457,7 @@ async function applyEloUpdates(wcSettled){
   const keys=Object.keys(wcSettled); if(!keys.length) return 0;
   const map=await getEloMap(); if(!map) return 0;
   const nameByNorm={};
-  try{ const {data}=await sb().rpc("bahis_all_elo"); for(const r of (data||[])) nameByNorm[norm(r.team_name)]=r.team_name; }catch(_){ return 0; }
+  try{ const {data}=await sb().rpc("bahis_all_elo"); for(const r of (data||[])) nameByNorm[norm(r.team_name)]=r.team_name; }catch(e){ warn("applyEloUpdates names",e); return 0; }
   const out=[];
   for(const k of keys){ const sc=wcSettled[k];
     const hk=findKey(sc.home,map), ak=findKey(sc.away,map); if(hk==null||ak==null||hk===ak) continue;
@@ -470,7 +471,7 @@ async function applyEloUpdates(wcSettled){
     out.push({team:nameByNorm[ak]||sc.away, elo:+(eA-delta).toFixed(1)});
   }
   if(!out.length) return 0;
-  try{ const {data:n}=await sb().rpc("bahis_apply_elo_updates",{p:out}); return n||0; }catch(_){ return 0; }
+  try{ const {data:n,error}=await sb().rpc("bahis_apply_elo_updates",{p:out}); if(error) throw error; return n||0; }catch(e){ warn("bahis_apply_elo_updates",e); return 0; }
 }
 
 async function captureClosing(){
@@ -484,13 +485,12 @@ async function captureClosing(){
       const {data:pend,error:pe}=await sb().rpc("bahis_pending_closing_rows",{sp});
       if(pe||!pend||!pend.length) continue;
       let events;
-      try{ const oe=await fetchOddsEvents(sp); if(oe.error) continue; events=oe.events; }catch(_){ continue; }
+      try{ const oe=await fetchOddsEvents(sp); if(oe.error) continue; events=oe.events; }catch(e){ warn(`captureClosing odds ${sp}`,e); continue; }
       const evByKey={};
       for(const ev of events){ evByKey[norm(ev.home_team)+"|"+norm(ev.away_team)]=ev; }
       const updates=[];
       for(const r of pend){
-        let ev=evByKey[norm(r.home)+"|"+norm(r.away)];
-        if(!ev){ for(const k in evByKey){ const [h,a]=k.split("|"); if((h.includes(norm(r.home))||norm(r.home).includes(h))&&(a.includes(norm(r.away))||norm(r.away).includes(a))){ ev=evByKey[k]; break; } } }
+        const k=findPair(r.home,r.away,evByKey); const ev=k? evByKey[k] : null;
         if(!ev) continue;
         const cons=buildConsensus(ev);
         let closing=null;
@@ -540,6 +540,8 @@ async function calibrate(){
       if(vHit>vMkt+0.02){ newThreshold=Math.max(3, paramsBefore.edge_threshold_base-0.3); thresholdNote=`value picks beat market (${(vHit*100).toFixed(1)}% hit vs ${(vMkt*100).toFixed(1)}% implied) -> lowering threshold slightly`; }
       else { newThreshold=Math.min(15, paramsBefore.edge_threshold_base+0.5); thresholdNote=`value picks did not clear their own market-implied rate (${(vHit*100).toFixed(1)}% hit vs ${(vMkt*100).toFixed(1)}% implied) -> raising threshold`; }
     }
+    // Bilincli: CLV >=10 satir varsa yukaridaki hit-rate karari EZILIR - CLV kucuk orneklemde
+    // hit-rate'ten daha guvenilir sinyal. Iki sinyali birlestirmek istenirse burasi degisir.
     const clvRows=valueRows.filter((r)=>r.clv_pct!=null);
     if(clvRows.length>=10){
       const avgClv=avg(clvRows.map((r)=>+r.clv_pct));
@@ -567,9 +569,11 @@ async function calibrate(){
       rhoNote=`re-fit over ${rhoRows.length} settled 1x2 picks, raw best=${bestRho.toFixed(2)}, damped to ${newRho}`;
     }
 
-    const newVersion=await sb().rpc("bahis_save_params",{p:{ rho:newRho, edge_threshold_base:+newThreshold.toFixed(2), notes:`auto-calibrated ${new Date().toISOString()} | n=${n} | ${thresholdNote} | ${rhoNote}` }});
+    const {error:se}=await sb().rpc("bahis_save_params",{p:{ rho:newRho, edge_threshold_base:+newThreshold.toFixed(2), notes:`auto-calibrated ${new Date().toISOString()} | n=${n} | ${thresholdNote} | ${rhoNote}` }});
+    if(se) return {error:"bahis_save_params: "+se.message};
     const paramsAfter=await getParams();
-    await sb().rpc("bahis_log_calibration",{p:{ sample_size:n, brier_score:brier, bucket_stats:bucketStats, params_before:paramsBefore, params_after:paramsAfter, notes:`${thresholdNote} || ${rhoNote}` }});
+    const {error:le}=await sb().rpc("bahis_log_calibration",{p:{ sample_size:n, brier_score:brier, bucket_stats:bucketStats, params_before:paramsBefore, params_after:paramsAfter, notes:`${thresholdNote} || ${rhoNote}` }});
+    if(le) warn("bahis_log_calibration",le);
     return { sample_size:n, brier_score:brier, bucket_stats:bucketStats, params_before:paramsBefore, params_after:paramsAfter, threshold_note:thresholdNote, rho_note:rhoNote };
   }catch(e){ return {error:String(e)}; }
 }
@@ -577,8 +581,10 @@ async function calibrate(){
 // ---------- v10: walk-forward backtest over football-data.co.uk archives ----------
 async function backtest(body){
   const sport=body.sport||"soccer_epl"; const code=CSV_COMP[sport]; if(!code) return {error:"csv kodu yok"};
-  const seasons=body.seasons||["2223","2324","2425","2526"];
-  const cfg={ sotW:SOT_W, formW:FORM_TOTAL_W, hl:45, thr:9.86, x12s:X12_PROB_SHRINK, rho:-0.12, ...(body.cfg||{}) };
+  const seasons=(Array.isArray(body.seasons)? body.seasons : ["2223","2324","2425","2526"]).filter((s)=>/^\d{4}$/.test(String(s))).slice(0,8);
+  if(!seasons.length) return {error:"seasons: 'YYYY' bicimi (orn. 2425), en fazla 8"};
+  const cfgIn={}; for(const k of ["sotW","formW","hl","thr","x12s","rho"]){ const v=+(body.cfg||{})[k]; if(isFinite(v)) cfgIn[k]=v; }
+  const cfg={ sotW:SOT_W, formW:FORM_TOTAL_W, hl:45, thr:9.86, x12s:X12_PROB_SHRINK, rho:-0.12, ...cfgIn };
   const raw=[];
   for(const s of seasons){ try{
     const r=await fetch(`https://www.football-data.co.uk/mmz4281/${s}/${code}.csv`); if(!r.ok) continue;
@@ -600,7 +606,7 @@ async function backtest(body){
         xh:c.mh>=0?(+L[c.mh]||null):null, xd:c.md>=0?(+L[c.md]||null):null, xa:c.ma>=0?(+L[c.ma]||null):null,
         po:c.po>=0?(+L[c.po]||null):null, pu:c.pu>=0?(+L[c.pu]||null):null });
     }
-  }catch(_){}}
+  }catch(e){ warn(`backtest csv ${code}/${s}`,e); }}
   raw.sort((x,y)=>x.t-y.t);
   if(raw.length<300) return { error:"yetersiz veri", n:raw.length };
   let g=0,s2=0; for(const r of raw){ if(r.sh!=null&&r.sa!=null){ g+=r.gh+r.ga; s2+=r.sh+r.sa; } }
@@ -683,7 +689,7 @@ async function backtest(body){
 
 // v10.4: sunucu tarafinda gunluk fis kaydi - site acilmasa da ogrenme dongusu veri alir
 async function autosave(){
-  const sports=Object.keys(CSV_COMP);
+  const sports=AUTOSAVE_SPORTS;
   const detail={}; let total=0;
   for(const sp of sports){
     try{
@@ -710,8 +716,13 @@ async function autosave(){
 
 Deno.serve(async (req)=>{
   if(req.method==="OPTIONS") return new Response("ok",{headers:CORS});
-  if(req.method==="GET") return J({ ok:true, service:"bahis-tahmin API v10.1" });
+  if(req.method==="GET") return J({ ok:MISSING_ENV.length===0, service:`bahis-tahmin API v${VERSION}`, missing_env:MISSING_ENV.length? MISSING_ENV : undefined, env:ENV_PRESENT });
   if(req.method==="POST"){ let body={}; try{ body=await req.json(); }catch{ return J({error:"geçersiz JSON"},400); }
+    if(MISSING_ENV.length) return J({ error:"eksik secret: "+MISSING_ENV.join(", ") },503);
+    if(ADMIN_ACTIONS.has(body.action)){
+      if(!ADMIN_KEY) return J({ error:"BAHIS_ADMIN_KEY secret'i tanimli degil; admin action kapali" },503);
+      if(req.headers.get("x-admin-key")!==ADMIN_KEY) return J({ error:"yetkisiz" },401);
+    }
     if(body.action==="fixtures") return J(await fetchFixtures(body.sport||WORLD_CUP_SPORT));
     if(body.action==="save") return J(await savePreds(body.picks||[]));
     if(body.action==="history") return J(await getHistory(body.sport));
@@ -728,6 +739,15 @@ Deno.serve(async (req)=>{
         const d=await r.json().catch(()=>({}));
         return J({key:true, status:r.status, results:d.results??null, errors:d.errors??null,
           sample:(d.response||[]).slice(0,3).map((x)=>({team:x.team&&x.team.name, player:x.player&&x.player.name, type:x.player&&x.player.type}))});
+      }catch(e){ return J({key:true, fetch_error:String(e)}); }
+    }
+    if(body.action==="sportmonks_debug"){ // plan kapsami: abonelikteki ligler (anahtar donmez)
+      const tok=SPORTMONKS_KEY||FOOTBALL_API_KEY; if(!tok) return J({key:false});
+      try{
+        const r=await fetch(`https://api.sportmonks.com/v3/football/leagues?per_page=50`,{headers:{"Authorization":tok}});
+        const d=await r.json().catch(()=>({}));
+        return J({ key:true, key_source:SPORTMONKS_KEY?"SPORTMONKS_API_KEY":"FOOTBALL_API_KEY", status:r.status, message:d.message??null,
+          leagues:(d.data||[]).map((l)=>({id:l.id,name:l.name,country_id:l.country_id})), subscription:d.subscription??null, rate_limit:d.rate_limit??null });
       }catch(e){ return J({key:true, fetch_error:String(e)}); }
     }
     if(body.action==="params"){ return J(await getParams()); }
