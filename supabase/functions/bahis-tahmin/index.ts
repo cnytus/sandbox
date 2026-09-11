@@ -367,11 +367,12 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_
       mod=mkt+s*(mod-mkt);
     }
     const edge=mod-mkt,odd=odds[m]||null;
-    // Fiyat-edge: en iyi fiyat / Pinnacle - 1 (yuzde); Pinnacle fiyati yoksa null -> value olamaz
-    const pinOdd=pin[m]||null; const pinEdge=(odd&&pinOdd&&pinOdd>1)? +((odd/pinOdd-1)*100).toFixed(2) : null;
+    // Fiyat-edge: en iyi fiyat / Pinnacle FAIR (marjsiz) - 1 (yuzde); Pinnacle fiyati yoksa null -> value olamaz
+    const pinOdd=(pin.raw||{})[m]||null; const pinFair=(pin.fair||{})[m]||null;
+    const pinEdge=(odd&&pinFair&&pinFair>1)? +((odd/pinFair-1)*100).toFixed(2) : null;
     // value = source!="market" (form/Elo var) VE fiyat-edge >= esik VE model karsi cikmiyor (edge >= 0)
     const value=source!=="market" && pinEdge!=null && pinEdge>=threshold && pinEdge<=PIN_EDGE_MAX_PCT && edge>=0;
-    return { code:m,name:MKN[m],family:FAMILY[m],model:+(mod*100).toFixed(1),mkt:+(mkt*100).toFixed(1),edge:+(edge*100).toFixed(1),odds:odd,odds_pin:pinOdd,pin_edge:pinEdge,value }; });
+    return { code:m,name:MKN[m],family:FAMILY[m],model:+(mod*100).toFixed(1),mkt:+(mkt*100).toFixed(1),edge:+(edge*100).toFixed(1),odds:odd,odds_pin:pinOdd,odds_pin_fair:pinFair?+pinFair.toFixed(3):null,pin_edge:pinEdge,value }; });
   const best=markets.filter((x)=>x.value&&x.odds).sort((a,b)=>b.pin_edge-a.pin_edge)[0]||null;
   if(best&&best.odds&&best.odds>1){
     const p=best.model/100, b=best.odds-1;
@@ -449,8 +450,7 @@ async function fetchFixtures(sport){
     const threshold=params.edge_threshold_base*params.family_correction;
     const extra={ commence:ev.commence_time, params_version:params.version, books_used:cons.books, __wc:isWC };
     if(inj&&(injd.h||injd.a)) extra.inj_out={home:injd.h,away:injd.a};
-    const pin={}; for(const m of ["1","X","2","O","U"]) pin[m]=pinnacleOdds(ev,m);
-    out.push(buildAuto(ev.home_team,ev.away_team,est.lh,est.la,cons.odds,indep,params.rho,threshold,extra,x12s,pin));
+    out.push(buildAuto(ev.home_team,ev.away_team,est.lh,est.la,cons.odds,indep,params.rho,threshold,extra,x12s,pinnacleFair(ev)));
   }
   const pk=out.filter(m=>m.pick&&m.pick.kelly_pct);
   const totK=pk.reduce((s,m)=>s+m.pick.kelly_pct,0);
@@ -507,6 +507,15 @@ function pinnacleOdds(ev,market){
   if(market==="O") return find("totals",(o)=>o.name==="Over"&&Math.abs((o.point??99)-2.5)<0.01);
   if(market==="U") return find("totals",(o)=>o.name==="Under"&&Math.abs((o.point??99)-2.5)<0.01);
   return null;
+}
+// Pinnacle FAIR (marjsiz) fiyatlari: kendi pazarini Shin ile devig et. Fiyat-edge bunun uzerinden olculur;
+// ham Pinnacle fiyatina gore olcum, marj (~%2-3) kadar sahte edge uretir (22 kitabin max'i her zaman gecer).
+function pinnacleFair(ev){
+  const out={}; const p={}; for(const m of ["1","X","2","O","U"]) p[m]=pinnacleOdds(ev,m);
+  if(p["1"]&&p["2"]){ const raw=p["X"]? [1/p["1"],1/p["X"],1/p["2"]] : [1/p["1"],1/p["2"]]; const f=shinDevig(raw);
+    out["1"]=1/f[0]; if(p["X"]){ out["X"]=1/f[1]; out["2"]=1/f[2]; } else out["2"]=1/f[1]; }
+  if(p["O"]&&p["U"]){ const f=shinDevig([1/p["O"],1/p["U"]]); out["O"]=1/f[0]; out["U"]=1/f[1]; }
+  return { raw:p, fair:out };
 }
 async function captureClosing(){
   try{
@@ -715,18 +724,21 @@ async function backtest(body){
       const ci={"1":0,"X":1,"2":2}[bestE[4]]; const pc=[r.ch,r.cd,r.ca][ci], av=[r.oh,r.od,r.oa][ci];
       if(pc&&pc>1){ clv.n++; const cm=bestE[1]/pc-1; clv.sumMax+=cm; if(cm>0) clv.posMax++; if(av&&av>1) clv.sumAvg+=av/pc-1; }
     }
-    // ---- Fiyat-edge kurali (1x2): aday = pinEdge en yuksek olan, tek bahis/mac ----
+    // ---- Fiyat-edge kurali (1x2): referans Pinnacle FAIR (PSH/PSD/PSA Shin-devig); aday = pinEdge en yuksek, tek bahis/mac ----
     { let bestP=null;
-      const pins=[r.ph,r.pd,r.pa], maxs=[r.xh,r.xd,r.xa], ks=[k1-mH,kX-mD,k2-mA], pcs=[r.ch,r.cd,r.ca];
+      let pins=[null,null,null];
+      if(r.ph>1&&r.pd>1&&r.pa>1){ const f=shinDevig([1/r.ph,1/r.pd,1/r.pa]); pins=[1/f[0],1/f[1],1/f[2]]; }
+      const maxs=[r.xh,r.xd,r.xa], ks=[k1-mH,kX-mD,k2-mA], pcs=[r.ch,r.cd,r.ca];
       for(let j=0;j<3;j++){ if(!pins[j]||pins[j]<=1||!maxs[j]||maxs[j]<=1) continue; const pe=maxs[j]/pins[j]-1;
         if(pe*100>=cfg.pinMin && ks[j]>=0 && (!bestP||pe>bestP.pe)) bestP={pe,j}; }
       if(bestP){ prBet(o===bestP.j, maxs[bestP.j], pcs[bestP.j], false); } }
     // ---- Ust/Alt 2.5 ----
     if(r.po&&r.pu&&r.po>1&&r.pu>1){
       const mO=(1/r.po)/((1/r.po)+(1/r.pu)); const kO=mO+cfg.ouShrink*(pm.o-mO); const over=(r.gh+r.ga)>2.5;
-      // fiyat-edge (O/U)
+      // fiyat-edge (O/U): referans Pinnacle FAIR (P>2.5/P<2.5 devig)
       if(r.po2&&r.po2>1&&r.xo&&r.xo>1&&r.pu2&&r.pu2>1&&r.xu&&r.xu>1){
-        const peO=r.xo/r.po2-1, peU=r.xu/r.pu2-1; const eOraw=kO-mO;
+        const fo=shinDevig([1/r.po2,1/r.pu2]); const fairO=1/fo[0], fairU=1/fo[1];
+        const peO=r.xo/fairO-1, peU=r.xu/fairU-1; const eOraw=kO-mO;
         if(peO*100>=cfg.pinMin && eOraw>=0 && peO>=peU) prBet(over, r.xo, r.co, true);
         else if(peU*100>=cfg.pinMin && eOraw<=0) prBet(!over, r.xu, r.cu, true);
       }
