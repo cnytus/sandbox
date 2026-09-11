@@ -656,7 +656,7 @@ async function backtest(body){
   // A1: CLV vs Pinnacle kapanisi (alinan oran / kapanis - 1); max oranla ve ortalama oranla ayri ayri
   const clv={ n:0, sumMax:0, sumAvg:0, posMax:0 };
   // A2: Ust/Alt 2.5 pazari - ayni walk-forward, model=probsLite().o, piyasa=devig(Avg>2.5,Avg<2.5)
-  const ou={ n:0, bets:0, hits:0, flat:0, brK:0, brM:0, clvN:0, clvSum:0, clvPos:0 }; const RO=[];
+  const ou={ n:0, bets:0, hits:0, flat:0, brK:0, brM:0, clvN:0, clvSum:0, clvSumAvg:0, clvPos:0 }; const RO=[];
   const R=[]; // raw walk-forward (model,market,outcome) rows for fit_blend stacking
   for(let i=warm;i<raw.length;i++){ const r=raw[i];
     if(!r.oh||!r.od||!r.oa) continue;
@@ -695,10 +695,10 @@ async function backtest(body){
       const mO=(1/r.po)/((1/r.po)+(1/r.pu)); const kO=mO+cfg.ouShrink*(pm.o-mO); const over=(r.gh+r.ga)>2.5;
       ou.n++; ou.brK+=Math.pow(kO-(over?1:0),2); ou.brM+=Math.pow(mO-(over?1:0),2); RO.push({p:pm.o,m:mO,o:over?1:0});
       const eO=kO-mO; let side=null;
-      if(eO*100>=cfg.thr && r.xo&&r.xo>1) side={won:over, odds:r.xo, pc:r.co};
-      else if(-eO*100>=cfg.thr && r.xu&&r.xu>1) side={won:!over, odds:r.xu, pc:r.cu};
+      if(eO*100>=cfg.thr && r.xo&&r.xo>1) side={won:over, odds:r.xo, avg:r.po, pc:r.co};
+      else if(-eO*100>=cfg.thr && r.xu&&r.xu>1) side={won:!over, odds:r.xu, avg:r.pu, pc:r.cu};
       if(side){ ou.bets++; if(side.won) ou.hits++; ou.flat+= side.won? side.odds-1 : -1;
-        if(side.pc&&side.pc>1){ ou.clvN++; const c2=side.odds/side.pc-1; ou.clvSum+=c2; if(c2>0) ou.clvPos++; } }
+        if(side.pc&&side.pc>1){ ou.clvN++; const c2=side.odds/side.pc-1; ou.clvSum+=c2; if(c2>0) ou.clvPos++; if(side.avg&&side.avg>1) ou.clvSumAvg+=side.avg/side.pc-1; } }
     }
   }
   const out={ sport, seasons, cfg, n_matches:nn, bets,
@@ -713,7 +713,7 @@ async function backtest(body){
     clv_pinnacle: clv.n? { n:clv.n, avg_pct_max_odds:+(100*clv.sumMax/clv.n).toFixed(2), avg_pct_avg_odds:+(100*clv.sumAvg/clv.n).toFixed(2), pos_rate_max_odds:+(clv.posMax/clv.n).toFixed(3) } : null,
     ou: ou.n? { n:ou.n, bets:ou.bets, hit_rate:ou.bets? +(ou.hits/ou.bets).toFixed(3):null, flat_roi_pct:ou.bets? +(100*ou.flat/ou.bets).toFixed(1):null,
       brier_model:+(ou.brK/ou.n).toFixed(4), brier_market:+(ou.brM/ou.n).toFixed(4),
-      clv_pinnacle: ou.clvN? { n:ou.clvN, avg_pct_max_odds:+(100*ou.clvSum/ou.clvN).toFixed(2), pos_rate:+(ou.clvPos/ou.clvN).toFixed(3) } : null } : null };
+      clv_pinnacle: ou.clvN? { n:ou.clvN, avg_pct_max_odds:+(100*ou.clvSum/ou.clvN).toFixed(2), avg_pct_avg_odds:+(100*ou.clvSumAvg/ou.clvN).toFixed(2), pos_rate:+(ou.clvPos/ou.clvN).toFixed(3) } : null } : null };
   // v10.2 stacking: learn blend weight w (p = market + w*(model-market)) by out-of-sample log-loss
   if(body.fit_blend){
     const LL=(w)=>{ let s=0; for(const r of R){ const pp=[r.mH+w*(r.p1-r.mH), r.mD+w*(r.px-r.mD), r.mA+w*(r.p2-r.mA)][r.o]; s+=-Math.log(Math.max(1e-9,pp)); } return s/Math.max(1,R.length); };
