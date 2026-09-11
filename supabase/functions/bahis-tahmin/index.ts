@@ -72,6 +72,9 @@ const WC_FORM_D_W=0.3;
 // Esik = model_params.edge_threshold_base x family_correction (DB'den, kalibrasyon CLV ile oynatir). Gerekce: backtest'te
 // model secimi ortalama oranda Pinnacle kapanisina kaybediyor; kazanc yalniz en iyi fiyattan geliyor (IMPROVEMENT_PLAN 2c).
 const PIN_EDGE_MIN_PCT=2; // yalniz backtest cfg varsayilani; canli esik DB'den
+// Ust sinir: Pinnacle'in %10+ ustundeki "en iyi fiyat" buyuk olasilikla bayat/hatali veya limitli hat.
+// Backtest: pinMin 2->5 arttikca kapanis-CLV artiyor ama gerceklesen ROI dusuyor (-2 -> -19) -> asiri fiyatlar alinamiyor.
+const PIN_EDGE_MAX_PCT=10;
 const KELLY_FRACTION=0.125; // 2026-09-10: 1/4 -> 1/8 (model belirsizligi; 1000 bahise kadar)
 const KELLY_CAP_PCT=3;      // 2026-09-10: 5 -> 3
 const ELO_K_WC=50;
@@ -299,20 +302,26 @@ function eloLambdas(home,away,map,homeBonus,rho,mu,formD,extraD){
   return mk(d);
 }
 
+// Borsalar (Betfair/Matchbook "back" fiyati): komisyonlu ve likiditeye bagli -> "en iyi bahisci fiyati" sayilmaz.
+// Konsensus/devig'e girer (keskin fiyat), best (pick orani, CLV) disinda tutulur.
+const EXCHANGE_KEYS=/betfair_ex|matchbook/;
 function buildConsensus(ev){
   const books=ev.bookmakers||[];
   const trip=[]; const best={};
   const TOTAL_LINES=[1.5,2.5,3.5];
   const linePairs={}; for(const L of TOTAL_LINES) linePairs[L]=[];
   for(const bk of books){
+    const isEx=EXCHANGE_KEYS.test(bk.key||"");
     const h2h=bk.markets&&bk.markets.find((m)=>m.key==="h2h");
     if(h2h){
       const oh=h2h.outcomes.find((o)=>o.name===ev.home_team);
       const oa=h2h.outcomes.find((o)=>o.name===ev.away_team);
       const od=h2h.outcomes.find((o)=>o.name==="Draw");
-      if(oh&&oh.price>1) best["1"]=Math.max(best["1"]||0,oh.price);
-      if(oa&&oa.price>1) best["2"]=Math.max(best["2"]||0,oa.price);
-      if(od&&od.price>1) best["X"]=Math.max(best["X"]||0,od.price);
+      if(!isEx){
+        if(oh&&oh.price>1) best["1"]=Math.max(best["1"]||0,oh.price);
+        if(oa&&oa.price>1) best["2"]=Math.max(best["2"]||0,oa.price);
+        if(od&&od.price>1) best["X"]=Math.max(best["X"]||0,od.price);
+      }
       if(oh&&oa&&oh.price>1&&oa.price>1) trip.push({h:1/oh.price, x:(od&&od.price>1)?1/od.price:null, a:1/oa.price});
     }
     const tot=bk.markets&&bk.markets.find((m)=>m.key==="totals");
@@ -320,8 +329,8 @@ function buildConsensus(ev){
       for(const L of TOTAL_LINES){
         const ov=tot.outcomes.find((o)=>o.name==="Over"&&Math.abs((o.point??99)-L)<0.01);
         const un=tot.outcomes.find((o)=>o.name==="Under"&&Math.abs((o.point??99)-L)<0.01);
-        if(ov&&ov.price>1&&L===2.5) best["O"]=Math.max(best["O"]||0,ov.price);
-        if(un&&un.price>1&&L===2.5) best["U"]=Math.max(best["U"]||0,un.price);
+        if(!isEx&&ov&&ov.price>1&&L===2.5) best["O"]=Math.max(best["O"]||0,ov.price);
+        if(!isEx&&un&&un.price>1&&L===2.5) best["U"]=Math.max(best["U"]||0,un.price);
         if(ov&&un&&ov.price>1&&un.price>1) linePairs[L].push({o:1/ov.price, u:1/un.price});
       }
     }
@@ -361,7 +370,7 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_
     // Fiyat-edge: en iyi fiyat / Pinnacle - 1 (yuzde); Pinnacle fiyati yoksa null -> value olamaz
     const pinOdd=pin[m]||null; const pinEdge=(odd&&pinOdd&&pinOdd>1)? +((odd/pinOdd-1)*100).toFixed(2) : null;
     // value = source!="market" (form/Elo var) VE fiyat-edge >= esik VE model karsi cikmiyor (edge >= 0)
-    const value=source!=="market" && pinEdge!=null && pinEdge>=threshold && edge>=0;
+    const value=source!=="market" && pinEdge!=null && pinEdge>=threshold && pinEdge<=PIN_EDGE_MAX_PCT && edge>=0;
     return { code:m,name:MKN[m],family:FAMILY[m],model:+(mod*100).toFixed(1),mkt:+(mkt*100).toFixed(1),edge:+(edge*100).toFixed(1),odds:odd,odds_pin:pinOdd,pin_edge:pinEdge,value }; });
   const best=markets.filter((x)=>x.value&&x.odds).sort((a,b)=>b.pin_edge-a.pin_edge)[0]||null;
   if(best&&best.odds&&best.odds>1){
