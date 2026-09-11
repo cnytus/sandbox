@@ -68,6 +68,10 @@ const GOAL_PROB_SHRINK=0.6;
 const FALLBACK_TOTAL_MU=2.7;
 const X12_PROB_SHRINK=0.85;
 const WC_FORM_D_W=0.3;
+// 2026-09-11 FIYAT-EDGE KURALI: pick = en iyi fiyat / Pinnacle fiyati - 1 >= esik VE model karsi cikmiyor (model edge >= 0).
+// Esik = model_params.edge_threshold_base x family_correction (DB'den, kalibrasyon CLV ile oynatir). Gerekce: backtest'te
+// model secimi ortalama oranda Pinnacle kapanisina kaybediyor; kazanc yalniz en iyi fiyattan geliyor (IMPROVEMENT_PLAN 2c).
+const PIN_EDGE_MIN_PCT=2; // yalniz backtest cfg varsayilani; canli esik DB'den
 const KELLY_FRACTION=0.125; // 2026-09-10: 1/4 -> 1/8 (model belirsizligi; 1000 bahise kadar)
 const KELLY_CAP_PCT=3;      // 2026-09-10: 5 -> 3
 const ELO_K_WC=50;
@@ -342,7 +346,7 @@ function buildConsensus(ev){
   return { pH,pD,pA,pOver,pOvers, odds:best, books:books.length };
 }
 
-function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_PROB_SHRINK){
+function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_PROB_SHRINK,pin={}){
   const market=probs(mLh,mLa,rho);
   let mdLh,mdLa,source;
   if(indep){ mdLh=indep.lh; mdLa=indep.la; source=extra.__wc?"elo":"form"; }
@@ -354,9 +358,12 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_
       mod=mkt+s*(mod-mkt);
     }
     const edge=mod-mkt,odd=odds[m]||null;
-    // 2026-09-11: source="market" (form/Elo yok) = marketAdj sezgiseli, bagimsiz bilgi tasimaz -> asla value degil
-    return { code:m,name:MKN[m],family:FAMILY[m],model:+(mod*100).toFixed(1),mkt:+(mkt*100).toFixed(1),edge:+(edge*100).toFixed(1),odds:odd,value:source!=="market"&&(edge*100)>=threshold }; });
-  const best=markets.filter((x)=>x.value&&x.odds).sort((a,b)=>b.edge-a.edge)[0]||null;
+    // Fiyat-edge: en iyi fiyat / Pinnacle - 1 (yuzde); Pinnacle fiyati yoksa null -> value olamaz
+    const pinOdd=pin[m]||null; const pinEdge=(odd&&pinOdd&&pinOdd>1)? +((odd/pinOdd-1)*100).toFixed(2) : null;
+    // value = source!="market" (form/Elo var) VE fiyat-edge >= esik VE model karsi cikmiyor (edge >= 0)
+    const value=source!=="market" && pinEdge!=null && pinEdge>=threshold && edge>=0;
+    return { code:m,name:MKN[m],family:FAMILY[m],model:+(mod*100).toFixed(1),mkt:+(mkt*100).toFixed(1),edge:+(edge*100).toFixed(1),odds:odd,odds_pin:pinOdd,pin_edge:pinEdge,value }; });
+  const best=markets.filter((x)=>x.value&&x.odds).sort((a,b)=>b.pin_edge-a.pin_edge)[0]||null;
   if(best&&best.odds&&best.odds>1){
     const p=best.model/100, b=best.odds-1;
     const kelly=Math.max(0,(p*best.odds-1)/b);
@@ -433,12 +440,13 @@ async function fetchFixtures(sport){
     const threshold=params.edge_threshold_base*params.family_correction;
     const extra={ commence:ev.commence_time, params_version:params.version, books_used:cons.books, __wc:isWC };
     if(inj&&(injd.h||injd.a)) extra.inj_out={home:injd.h,away:injd.a};
-    out.push(buildAuto(ev.home_team,ev.away_team,est.lh,est.la,cons.odds,indep,params.rho,threshold,extra,x12s));
+    const pin={}; for(const m of ["1","X","2","O","U"]) pin[m]=pinnacleOdds(ev,m);
+    out.push(buildAuto(ev.home_team,ev.away_team,est.lh,est.la,cons.odds,indep,params.rho,threshold,extra,x12s,pin));
   }
   const pk=out.filter(m=>m.pick&&m.pick.kelly_pct);
   const totK=pk.reduce((s,m)=>s+m.pick.kelly_pct,0);
   if(totK>15) for(const m of pk) m.pick.kelly_pct=+(m.pick.kelly_pct*15/totK).toFixed(1);
-  return { matches:out, count:out.length, form_count:formCount, params_version:params.version, rho:params.rho, league_x12s:x12s, halflife_days:halflife, injury_signal:!!inj, edge_threshold_pct:+(params.edge_threshold_base*params.family_correction).toFixed(2) };
+  return { matches:out, count:out.length, form_count:formCount, params_version:params.version, rho:params.rho, league_x12s:x12s, halflife_days:halflife, injury_signal:!!inj, edge_threshold_pct:+(params.edge_threshold_base*params.family_correction).toFixed(2), rule:"price_edge" };
 }
 
 async function savePreds(picks){ try{ const {data,error}=await sb().rpc("bahis_save_predictions",{p:picks}); if(error) return {ok:false,error:error.message}; return {ok:true,saved:data}; }catch(e){ return {ok:false,error:String(e)}; } }
@@ -604,8 +612,8 @@ async function backtest(body){
   const sport=body.sport||"soccer_epl"; const code=CSV_COMP[sport]; if(!code) return {error:"csv kodu yok"};
   const seasons=(Array.isArray(body.seasons)? body.seasons : ["2223","2324","2425","2526"]).filter((s)=>/^\d{4}$/.test(String(s))).slice(0,8);
   if(!seasons.length) return {error:"seasons: 'YYYY' bicimi (orn. 2425), en fazla 8"};
-  const cfgIn={}; for(const k of ["sotW","formW","hl","thr","x12s","rho","ouShrink"]){ const v=+(body.cfg||{})[k]; if(isFinite(v)) cfgIn[k]=v; }
-  const cfg={ sotW:SOT_W, formW:FORM_TOTAL_W, hl:45, thr:9.86, x12s:X12_PROB_SHRINK, rho:-0.12, ouShrink:GOAL_PROB_SHRINK, ...cfgIn };
+  const cfgIn={}; for(const k of ["sotW","formW","hl","thr","x12s","rho","ouShrink","pinMin"]){ const v=+(body.cfg||{})[k]; if(isFinite(v)) cfgIn[k]=v; }
+  const cfg={ sotW:SOT_W, formW:FORM_TOTAL_W, hl:45, thr:9.86, x12s:X12_PROB_SHRINK, rho:-0.12, ouShrink:GOAL_PROB_SHRINK, pinMin:PIN_EDGE_MIN_PCT, ...cfgIn };
   const raw=[]; const cols={ pinnacle_closing:false, pinnacle_ou_closing:false, max_ou:false };
   for(const s of seasons){ try{
     const r=await fetch(`https://www.football-data.co.uk/mmz4281/${s}/${code}.csv`); if(!r.ok) continue;
@@ -619,7 +627,9 @@ async function backtest(body){
       po:pick2("Avg>2.5","B365>2.5"), pu:pick2("Avg<2.5","B365<2.5"),
       xo:pick2("Max>2.5","B365>2.5"), xu:pick2("Max<2.5","B365<2.5"),
       ch:pick2("PSCH","PSH"), cd:pick2("PSCD","PSD"), ca:pick2("PSCA","PSA"),
-      co:pick2("PC>2.5","P>2.5"), cu:pick2("PC<2.5","P<2.5") };
+      co:pick2("PC>2.5","P>2.5"), cu:pick2("PC<2.5","P<2.5"),
+      // Pinnacle ACILIS/mac-oncesi fiyati (fiyat-edge kurali icin referans): PSH/PSD/PSA, P>2.5/P<2.5
+      ph:ix("PSH"), pd:ix("PSD"), pa:ix("PSA"), po2:ix("P>2.5"), pu2:ix("P<2.5") };
     if(ix("PSCH")>=0) cols.pinnacle_closing=true; if(ix("PC>2.5")>=0) cols.pinnacle_ou_closing=true; if(ix("Max>2.5")>=0) cols.max_ou=true;
     if(c.d<0||c.h<0||c.gh<0) continue;
     const num=(i,L)=> (i>=0 && L[i]!==""&&L[i]!=null)? (+L[i]||null) : null;
@@ -632,7 +642,8 @@ async function backtest(body){
         oh:num(c.ah,L), od:num(c.ad,L), oa:num(c.aa,L),
         xh:num(c.mh,L), xd:num(c.md,L), xa:num(c.ma,L),
         po:num(c.po,L), pu:num(c.pu,L), xo:num(c.xo,L), xu:num(c.xu,L),
-        ch:num(c.ch,L), cd:num(c.cd,L), ca:num(c.ca,L), co:num(c.co,L), cu:num(c.cu,L) });
+        ch:num(c.ch,L), cd:num(c.cd,L), ca:num(c.ca,L), co:num(c.co,L), cu:num(c.cu,L),
+        ph:num(c.ph,L), pd:num(c.pd,L), pa:num(c.pa,L), po2:num(c.po2,L), pu2:num(c.pu2,L) });
     }
   }catch(e){ warn(`backtest csv ${code}/${s}`,e); }}
   raw.sort((x,y)=>x.t-y.t);
@@ -658,6 +669,10 @@ async function backtest(body){
   const clv={ n:0, sumMax:0, sumAvg:0, posMax:0 };
   // A2: Ust/Alt 2.5 pazari - ayni walk-forward, model=probsLite().o, piyasa=devig(Avg>2.5,Avg<2.5)
   const ou={ n:0, bets:0, hits:0, flat:0, brK:0, brM:0, clvN:0, clvSum:0, clvSumAvg:0, clvPos:0 }; const RO=[];
+  // Fiyat-edge kurali: max oran / Pinnacle mac-oncesi - 1 >= pinMin VE model karsi cikmiyor (edge>=0); CLV = max / Pinnacle KAPANIS - 1
+  const pr={ bets:0, hits:0, flat:0, clvN:0, clvSum:0, clvPos:0, ouBets:0, ouHits:0, ouFlat:0, ouClvN:0, ouClvSum:0, ouClvPos:0 };
+  const prBet=(won,odds,pc,isOU)=>{ const B=isOU?"ouBets":"bets", H=isOU?"ouHits":"hits", F=isOU?"ouFlat":"flat", N=isOU?"ouClvN":"clvN", S=isOU?"ouClvSum":"clvSum", P=isOU?"ouClvPos":"clvPos";
+    pr[B]++; if(won) pr[H]++; pr[F]+= won? odds-1 : -1; if(pc&&pc>1){ pr[N]++; const c=odds/pc-1; pr[S]+=c; if(c>0) pr[P]++; } };
   const R=[]; // raw walk-forward (model,market,outcome) rows for fit_blend stacking
   for(let i=warm;i<raw.length;i++){ const r=raw[i];
     if(!r.oh||!r.od||!r.oa) continue;
@@ -691,9 +706,21 @@ async function backtest(body){
       const ci={"1":0,"X":1,"2":2}[bestE[4]]; const pc=[r.ch,r.cd,r.ca][ci], av=[r.oh,r.od,r.oa][ci];
       if(pc&&pc>1){ clv.n++; const cm=bestE[1]/pc-1; clv.sumMax+=cm; if(cm>0) clv.posMax++; if(av&&av>1) clv.sumAvg+=av/pc-1; }
     }
+    // ---- Fiyat-edge kurali (1x2): aday = pinEdge en yuksek olan, tek bahis/mac ----
+    { let bestP=null;
+      const pins=[r.ph,r.pd,r.pa], maxs=[r.xh,r.xd,r.xa], ks=[k1-mH,kX-mD,k2-mA], pcs=[r.ch,r.cd,r.ca];
+      for(let j=0;j<3;j++){ if(!pins[j]||pins[j]<=1||!maxs[j]||maxs[j]<=1) continue; const pe=maxs[j]/pins[j]-1;
+        if(pe*100>=cfg.pinMin && ks[j]>=0 && (!bestP||pe>bestP.pe)) bestP={pe,j}; }
+      if(bestP){ prBet(o===bestP.j, maxs[bestP.j], pcs[bestP.j], false); } }
     // ---- Ust/Alt 2.5 ----
     if(r.po&&r.pu&&r.po>1&&r.pu>1){
       const mO=(1/r.po)/((1/r.po)+(1/r.pu)); const kO=mO+cfg.ouShrink*(pm.o-mO); const over=(r.gh+r.ga)>2.5;
+      // fiyat-edge (O/U)
+      if(r.po2&&r.po2>1&&r.xo&&r.xo>1&&r.pu2&&r.pu2>1&&r.xu&&r.xu>1){
+        const peO=r.xo/r.po2-1, peU=r.xu/r.pu2-1; const eOraw=kO-mO;
+        if(peO*100>=cfg.pinMin && eOraw>=0 && peO>=peU) prBet(over, r.xo, r.co, true);
+        else if(peU*100>=cfg.pinMin && eOraw<=0) prBet(!over, r.xu, r.cu, true);
+      }
       ou.n++; ou.brK+=Math.pow(kO-(over?1:0),2); ou.brM+=Math.pow(mO-(over?1:0),2); RO.push({p:pm.o,m:mO,o:over?1:0});
       const eO=kO-mO; let side=null;
       if(eO*100>=cfg.thr && r.xo&&r.xo>1) side={won:over, odds:r.xo, avg:r.po, pc:r.co};
@@ -711,6 +738,9 @@ async function backtest(body){
     rps_model:+(rpsK/nn).toFixed(4), rps_market:+(rpsM/nn).toFixed(4),
     draw:{bets:xBets, hits:xHits, flat_roi:xBets? +(100*xFlat/xBets).toFixed(1):null},
     cols,
+    price_rule: { pin_min_pct:cfg.pinMin,
+      x12:{ bets:pr.bets, hit_rate:pr.bets? +(pr.hits/pr.bets).toFixed(3):null, flat_roi_pct:pr.bets? +(100*pr.flat/pr.bets).toFixed(1):null, clv_close_n:pr.clvN, clv_close_avg_pct:pr.clvN? +(100*pr.clvSum/pr.clvN).toFixed(2):null, clv_pos_rate:pr.clvN? +(pr.clvPos/pr.clvN).toFixed(3):null },
+      ou:{ bets:pr.ouBets, hit_rate:pr.ouBets? +(pr.ouHits/pr.ouBets).toFixed(3):null, flat_roi_pct:pr.ouBets? +(100*pr.ouFlat/pr.ouBets).toFixed(1):null, clv_close_n:pr.ouClvN, clv_close_avg_pct:pr.ouClvN? +(100*pr.ouClvSum/pr.ouClvN).toFixed(2):null, clv_pos_rate:pr.ouClvN? +(pr.ouClvPos/pr.ouClvN).toFixed(3):null } },
     clv_pinnacle: clv.n? { n:clv.n, avg_pct_max_odds:+(100*clv.sumMax/clv.n).toFixed(2), avg_pct_avg_odds:+(100*clv.sumAvg/clv.n).toFixed(2), pos_rate_max_odds:+(clv.posMax/clv.n).toFixed(3) } : null,
     ou: ou.n? { n:ou.n, bets:ou.bets, hit_rate:ou.bets? +(ou.hits/ou.bets).toFixed(3):null, flat_roi_pct:ou.bets? +(100*ou.flat/ou.bets).toFixed(1):null,
       brier_model:+(ou.brK/ou.n).toFixed(4), brier_market:+(ou.brM/ou.n).toFixed(4),
@@ -756,7 +786,7 @@ async function autosave(){
         if(dt<=0||dt>8*86400000) continue;
         picks.push({ sport:sp, home:m.home, away:m.away, match_date:String(m.commence).slice(0,10),
           market:m.pick.code, family:m.pick.family, model_prob:m.pick.model/100, market_prob:m.pick.mkt/100,
-          edge_pct:m.pick.edge, odds:m.pick.odds, is_value:true, source:"autosave",
+          edge_pct:m.pick.edge, odds:m.pick.odds, odds_pinnacle:m.pick.odds_pin, pin_edge_pct:m.pick.pin_edge, is_value:true, source:"autosave",
           lambda_home:m.model_lh, lambda_away:m.model_la, params_version:m.params_version });
       }
       let saved=0;
