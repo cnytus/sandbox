@@ -354,7 +354,8 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_
       mod=mkt+s*(mod-mkt);
     }
     const edge=mod-mkt,odd=odds[m]||null;
-    return { code:m,name:MKN[m],family:FAMILY[m],model:+(mod*100).toFixed(1),mkt:+(mkt*100).toFixed(1),edge:+(edge*100).toFixed(1),odds:odd,value:(edge*100)>=threshold }; });
+    // 2026-09-11: source="market" (form/Elo yok) = marketAdj sezgiseli, bagimsiz bilgi tasimaz -> asla value degil
+    return { code:m,name:MKN[m],family:FAMILY[m],model:+(mod*100).toFixed(1),mkt:+(mkt*100).toFixed(1),edge:+(edge*100).toFixed(1),odds:odd,value:source!=="market"&&(edge*100)>=threshold }; });
   const best=markets.filter((x)=>x.value&&x.odds).sort((a,b)=>b.edge-a.edge)[0]||null;
   if(best&&best.odds&&best.odds>1){
     const p=best.model/100, b=best.odds-1;
