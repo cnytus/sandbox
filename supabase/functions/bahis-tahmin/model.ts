@@ -26,7 +26,7 @@ export function shinDevig(rawProbs){
 export const avg=(a)=>a.reduce((x,y)=>x+y,0)/a.length;
 export const median=(a)=>{ if(!a.length) return null; const s=[...a].sort((x,y)=>x-y); const m=s.length>>1; return s.length%2? s[m] : (s[m-1]+s[m])/2; };
 
-export const norm=(s)=> (s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/\b(fc|afc|cf|sc|ac|cd|ssc|bk|club)\b/g,"").replace(/[^a-z0-9]/g,"");
+export const norm=(s)=> (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\b(fc|afc|cf|sc|ac|cd|ssc|bk|club)\b/g,"").replace(/[^a-z0-9]/g,"");
 // Takim adi -> map anahtari. Once tam eslesme; sonra substring, ama YALNIZ tek aday varsa
 // (eski surum ilk substring'i aliyordu -> "manchester" city/united hangisi once gelirse).
 export function findKey(name,map){
