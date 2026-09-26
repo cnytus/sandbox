@@ -75,6 +75,9 @@ const PIN_EDGE_MIN_PCT=2; // yalniz backtest cfg varsayilani; canli esik DB'den
 // Ust sinir: Pinnacle'in %10+ ustundeki "en iyi fiyat" buyuk olasilikla bayat/hatali veya limitli hat.
 // Backtest: pinMin 2->5 arttikca kapanis-CLV artiyor ama gerceklesen ROI dusuyor (-2 -> -19) -> asiri fiyatlar alinamiyor.
 const PIN_EDGE_MAX_PCT=10;
+// Oran ust siniri (2026-09-26 backtest, 6 lig x 4 sezon, fiyat-edge %2): oran <=6 -> 927 bahis ROI +12; oran >6 -> 285 bahis ROI -30
+// (5/6 ligde negatif; CLV pozitif olsa da uzun oranlarda favori-uzun oran yanliligi gercek ROI'yi yutuyor). Kanit: IMPROVEMENT_PLAN 2g.
+const PIN_MAX_ODDS=6;
 // Kalibrasyon esik tabani: 1.16 x family_correction 1.73 = %2 (fiyat-edge backtest esigi). Eski taban 3 (=%5.2) fiyat-edge
 // kuralinda her kalibrasyonda esigi geri yukseltip tum pick'leri kesiyordu (14.09-26.09 canli: 0 pick).
 const THR_BASE_MIN=1.16;
@@ -370,7 +373,7 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_
     const pinOdd=(pin.raw||{})[m]||null; const pinFair=(pin.fair||{})[m]||null;
     const pinEdge=(odd&&pinFair&&pinFair>1)? +((odd/pinFair-1)*100).toFixed(2) : null;
     // value = source!="market" (form/Elo var) VE fiyat-edge >= esik VE model karsi cikmiyor (edge >= 0)
-    const value=source!=="market" && pinEdge!=null && pinEdge>=threshold && pinEdge<=PIN_EDGE_MAX_PCT && edge>=0;
+    const value=source!=="market" && pinEdge!=null && pinEdge>=threshold && pinEdge<=PIN_EDGE_MAX_PCT && edge>=0 && odd<=PIN_MAX_ODDS;
     return { code:m,name:MKN[m],family:FAMILY[m],model:+(mod*100).toFixed(1),mkt:+(mkt*100).toFixed(1),edge:+(edge*100).toFixed(1),odds:odd,odds_pin:pinOdd,odds_pin_fair:pinFair?+pinFair.toFixed(3):null,pin_edge:pinEdge,book:(pin.book||{})[m]||null,value }; });
   const best=markets.filter((x)=>x.value&&x.odds).sort((a,b)=>b.pin_edge-a.pin_edge)[0]||null;
   if(best&&best.odds&&best.odds>1){
@@ -644,8 +647,8 @@ async function backtest(body){
   const sport=body.sport||"soccer_epl"; const code=CSV_COMP[sport]; if(!code) return {error:"csv kodu yok"};
   const seasons=(Array.isArray(body.seasons)? body.seasons : ["2223","2324","2425","2526"]).filter((s)=>/^\d{4}$/.test(String(s))).slice(0,8);
   if(!seasons.length) return {error:"seasons: 'YYYY' bicimi (orn. 2425), en fazla 8"};
-  const cfgIn={}; for(const k of ["sotW","formW","hl","thr","x12s","rho","ouShrink","pinMin"]){ const v=+(body.cfg||{})[k]; if(isFinite(v)) cfgIn[k]=v; }
-  const cfg={ sotW:SOT_W, formW:FORM_TOTAL_W, hl:45, thr:9.86, x12s:X12_PROB_SHRINK, rho:-0.12, ouShrink:GOAL_PROB_SHRINK, pinMin:PIN_EDGE_MIN_PCT, ...cfgIn };
+  const cfgIn={}; for(const k of ["sotW","formW","hl","thr","x12s","rho","ouShrink","pinMin","pinMax","maxOdds"]){ const v=+(body.cfg||{})[k]; if(isFinite(v)) cfgIn[k]=v; }
+  const cfg={ sotW:SOT_W, formW:FORM_TOTAL_W, hl:45, thr:9.86, x12s:X12_PROB_SHRINK, rho:-0.12, ouShrink:GOAL_PROB_SHRINK, pinMin:PIN_EDGE_MIN_PCT, pinMax:PIN_EDGE_MAX_PCT, maxOdds:PIN_MAX_ODDS, ...cfgIn }; // maxOdds 0 = sinirsiz
   const raw=[]; const cols={ pinnacle_closing:false, pinnacle_ou_closing:false, max_ou:false };
   for(const s of seasons){ try{
     const r=await fetch(`https://www.football-data.co.uk/mmz4281/${s}/${code}.csv`); if(!r.ok) continue;
@@ -702,9 +705,12 @@ async function backtest(body){
   // A2: Ust/Alt 2.5 pazari - ayni walk-forward, model=probsLite().o, piyasa=devig(Avg>2.5,Avg<2.5)
   const ou={ n:0, bets:0, hits:0, flat:0, brK:0, brM:0, clvN:0, clvSum:0, clvSumAvg:0, clvPos:0 }; const RO=[];
   // Fiyat-edge kurali: max oran / Pinnacle mac-oncesi - 1 >= pinMin VE model karsi cikmiyor (edge>=0); CLV = max / Pinnacle KAPANIS - 1
-  const pr={ bets:0, hits:0, flat:0, clvN:0, clvSum:0, clvPos:0, ouBets:0, ouHits:0, ouFlat:0, ouClvN:0, ouClvSum:0, ouClvPos:0 };
+  const pr={ bets:0, hits:0, flat:0, clvN:0, clvSum:0, clvPos:0, ouBets:0, ouHits:0, ouFlat:0, ouClvN:0, ouClvSum:0, ouClvPos:0, bins:{} };
+  // Oran ust siniri karari icin: 1x2 fiyat-edge bahisleri oran aralig(bin)ina gore ayri toplanir (kumulatif okunarak her cap turetilir)
+  const ODDS_BINS=[[2,"<=2"],[3,"2-3"],[4,"3-4"],[6,"4-6"],[10,"6-10"],[1e9,">10"]];
   const prBet=(won,odds,pc,isOU)=>{ const B=isOU?"ouBets":"bets", H=isOU?"ouHits":"hits", F=isOU?"ouFlat":"flat", N=isOU?"ouClvN":"clvN", S=isOU?"ouClvSum":"clvSum", P=isOU?"ouClvPos":"clvPos";
-    pr[B]++; if(won) pr[H]++; pr[F]+= won? odds-1 : -1; if(pc&&pc>1){ pr[N]++; const c=odds/pc-1; pr[S]+=c; if(c>0) pr[P]++; } };
+    pr[B]++; if(won) pr[H]++; pr[F]+= won? odds-1 : -1; if(pc&&pc>1){ pr[N]++; const c=odds/pc-1; pr[S]+=c; if(c>0) pr[P]++; }
+    if(!isOU){ const bn=ODDS_BINS.find((x)=>odds<=x[0])[1]; const b=pr.bins[bn]||(pr.bins[bn]={bets:0,hits:0,flat:0,clvN:0,clvSum:0}); b.bets++; if(won) b.hits++; b.flat+= won? odds-1 : -1; if(pc&&pc>1){ b.clvN++; b.clvSum+=odds/pc-1; } } };
   const R=[]; // raw walk-forward (model,market,outcome) rows for fit_blend stacking
   for(let i=warm;i<raw.length;i++){ const r=raw[i];
     if(!r.oh||!r.od||!r.oa) continue;
@@ -744,7 +750,7 @@ async function backtest(body){
       if(r.ph>1&&r.pd>1&&r.pa>1){ const f=shinDevig([1/r.ph,1/r.pd,1/r.pa]); pins=[1/f[0],1/f[1],1/f[2]]; }
       const maxs=[r.xh,r.xd,r.xa], ks=[k1-mH,kX-mD,k2-mA], pcs=[r.ch,r.cd,r.ca];
       for(let j=0;j<3;j++){ if(!pins[j]||pins[j]<=1||!maxs[j]||maxs[j]<=1) continue; const pe=maxs[j]/pins[j]-1;
-        if(pe*100>=cfg.pinMin && ks[j]>=0 && (!bestP||pe>bestP.pe)) bestP={pe,j}; }
+        if(pe*100>=cfg.pinMin && pe*100<=cfg.pinMax && ks[j]>=0 && (!(cfg.maxOdds>0)||maxs[j]<=cfg.maxOdds) && (!bestP||pe>bestP.pe)) bestP={pe,j}; }
       if(bestP){ prBet(o===bestP.j, maxs[bestP.j], pcs[bestP.j], false); } }
     // ---- Ust/Alt 2.5 ----
     if(r.po&&r.pu&&r.po>1&&r.pu>1){
@@ -773,7 +779,8 @@ async function backtest(body){
     rps_model:+(rpsK/nn).toFixed(4), rps_market:+(rpsM/nn).toFixed(4),
     draw:{bets:xBets, hits:xHits, flat_roi:xBets? +(100*xFlat/xBets).toFixed(1):null},
     cols,
-    price_rule: { pin_min_pct:cfg.pinMin,
+    price_rule: { pin_min_pct:cfg.pinMin, pin_max_pct:cfg.pinMax, max_odds:cfg.maxOdds||null,
+      x12_by_odds: Object.fromEntries(ODDS_BINS.map((x)=>x[1]).filter((k)=>pr.bins[k]).map((k)=>{ const b=pr.bins[k]; return [k,{ bets:b.bets, hit_rate:+(b.hits/b.bets).toFixed(3), flat_roi_pct:+(100*b.flat/b.bets).toFixed(1), clv_close_avg_pct:b.clvN? +(100*b.clvSum/b.clvN).toFixed(2):null }]; })),
       x12:{ bets:pr.bets, hit_rate:pr.bets? +(pr.hits/pr.bets).toFixed(3):null, flat_roi_pct:pr.bets? +(100*pr.flat/pr.bets).toFixed(1):null, clv_close_n:pr.clvN, clv_close_avg_pct:pr.clvN? +(100*pr.clvSum/pr.clvN).toFixed(2):null, clv_pos_rate:pr.clvN? +(pr.clvPos/pr.clvN).toFixed(3):null },
       ou:{ bets:pr.ouBets, hit_rate:pr.ouBets? +(pr.ouHits/pr.ouBets).toFixed(3):null, flat_roi_pct:pr.ouBets? +(100*pr.ouFlat/pr.ouBets).toFixed(1):null, clv_close_n:pr.ouClvN, clv_close_avg_pct:pr.ouClvN? +(100*pr.ouClvSum/pr.ouClvN).toFixed(2):null, clv_pos_rate:pr.ouClvN? +(pr.ouClvPos/pr.ouClvN).toFixed(3):null } },
     clv_pinnacle: clv.n? { n:clv.n, avg_pct_max_odds:+(100*clv.sumMax/clv.n).toFixed(2), avg_pct_avg_odds:+(100*clv.sumAvg/clv.n).toFixed(2), pos_rate_max_odds:+(clv.posMax/clv.n).toFixed(3) } : null,
