@@ -10,7 +10,7 @@
 //      P4 CLV-driven calibration; P5 team home advantage; P6 draw breakdown; P7 exposure cap.
 // v9.x) CSV source (T1 + SoT blend); DC ratings; rest; steam. v8.x/v7 in git history.
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt } from "./model.ts";
+import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick } from "./model.ts";
 
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
@@ -24,7 +24,7 @@ const FOOTBALL_API_KEY=Deno.env.get("FOOTBALL_API_KEY")||""; // API-Football (ap
 const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"";
 // Yazan / pahali action'lar (settle, calibrate, backtest, ...) bu header'i ister. pg_cron komutlari da gonderir.
 const ADMIN_KEY=Deno.env.get("BAHIS_ADMIN_KEY")||"";
-const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug"]);
+const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe"]);
 // FOOTBALL_DATA_KEY zorunlu degil (CSV birincil form kaynagi; FD yalniz yedek + Dunya Kupasi formu)
 const MISSING_ENV=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","ODDS_API_KEY"].filter((k)=>!Deno.env.get(k));
 // Tani: hangi secret'lar tanimli (degerler asla donmez)
@@ -81,6 +81,10 @@ const PIN_MAX_ODDS=6;
 // Kalibrasyon esik tabani: 1.16 x family_correction 1.73 = %2 (fiyat-edge backtest esigi). Eski taban 3 (=%5.2) fiyat-edge
 // kuralinda her kalibrasyonda esigi geri yukseltip tum pick'leri kesiyordu (14.09-26.09 canli: 0 pick).
 const THR_BASE_MIN=1.16;
+// Ek pazarlar (2026-09-27): Ust 1,5 / Alt 3,5 icin Odds API alternate_totals mac basina ayri cagri (1 kredi). Yalniz
+// basina ALT_WINDOW_D gun kalan maclar, 12 saat onbellek, istek basina en fazla ALT_MAX_CALLS cagri (kredi korumasi).
+const ALT_WINDOW_D=4, ALT_TTL_H=12, ALT_MAX_CALLS=25;
+const XMKN={ DC1X:"Çifte Şans 1X", DCX2:"Çifte Şans X2", DC12:"Çifte Şans 12", DNB1:"Beraberlikte İade 1", DNB2:"Beraberlikte İade 2", O15:"Üst 1.5", U35:"Alt 3.5" };
 const KELLY_FRACTION=0.125; // 2026-09-10: 1/4 -> 1/8 (model belirsizligi; 1000 bahise kadar)
 const KELLY_CAP_PCT=3;      // 2026-09-10: 5 -> 3
 const ELO_K_WC=50;
@@ -396,6 +400,32 @@ async function fetchOddsEvents(sport){
   return { events, cached:false };
 }
 
+async function fetchAltTotals(sport,events){
+  const now=Date.now(); const key="alt:"+sport; let map={};
+  try{ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:key,max_age_seconds:7*86400}); if(data&&typeof data==="object"&&!Array.isArray(data)) map=data; }catch(e){ warn("alt cache read",e); }
+  const need=events.filter((ev)=>{ const t=new Date(ev.commence_time).getTime(); if(!(t>now&&t-now<=ALT_WINDOW_D*86400000)) return false;
+    const c=map[ev.id]; return !c||now-c.t>ALT_TTL_H*3600000; }).slice(0,ALT_MAX_CALLS);
+  let changed=false;
+  for(const ev of need){ try{
+    const r=await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/events/${ev.id}/odds?apiKey=${ODDS_KEY}&regions=eu&markets=alternate_totals&oddsFormat=decimal`);
+    if(!r.ok){ warn(`alt totals ${sport} HTTP`,r.status); continue; }
+    const d=await r.json(); map[ev.id]={ t:now, b:(d.bookmakers||[]).map((b)=>({ k:b.key, n:b.title||b.key, o:(((b.markets||[])[0])||{}).outcomes||[] })) }; changed=true;
+  }catch(e){ warn("alt totals",e); } }
+  if(changed){ for(const id in map){ if(now-map[id].t>7*86400000) delete map[id]; } try{ await sb().rpc("bahis_set_odds_cache",{sp:key,p:map}); }catch(e){ warn("alt cache write",e); } }
+  return map;
+}
+// alternate_totals -> Ust 1,5 ve Alt 3,5: en iyi fiyat (borsalar haric) + Pinnacle adil olasilik (Shin devig)
+function altOU(entry){
+  if(!entry||!entry.b) return null; const best={}; let pin=null;
+  for(const b of entry.b){ const g=(nm,pt)=>{ const x=(b.o||[]).find((o)=>o.name===nm&&Math.abs((o.point??99)-pt)<0.01); return (x&&x.price>1)? x.price : null; };
+    if(b.k==="pinnacle") pin={ o15:g("Over",1.5), u15:g("Under",1.5), o35:g("Over",3.5), u35:g("Under",3.5) };
+    if(!EXCHANGE_KEYS.test(b.k||"")) for(const [code,nm,pt] of [["O15","Over",1.5],["U35","Under",3.5]]){ const p=g(nm,pt); if(p&&p>((best[code]||{}).price||0)) best[code]={price:p,book:b.n}; } }
+  if(!pin) return null; const out={};
+  if(pin.o15&&pin.u15&&best.O15){ const f=shinDevig([1/pin.o15,1/pin.u15]); out.O15={...best.O15, fp:f[0]}; }
+  if(pin.o35&&pin.u35&&best.U35){ const f=shinDevig([1/pin.o35,1/pin.u35]); out.U35={...best.U35, fp:f[1]}; }
+  return out;
+}
+
 async function fetchFixtures(sport){
   const params=await getParams();
   const lpAll=await getLeagueParams();
@@ -415,6 +445,7 @@ async function fetchFixtures(sport){
   const eloMap=isWC? await getEloMap() : null;
   const wcForm=isWC? await fetchWcForm(21) : null;
   const inj=await fetchInjuries(sport);
+  const alt=isWC? {} : await fetchAltTotals(sport, events.filter((ev)=>!(ev.commence_time&&new Date(ev.commence_time).getTime()<=Date.now())));
   const out=[]; let formCount=0;
   const evKey=(ev)=>norm(ev.home_team)+"|"+norm(ev.away_team)+"|"+String(ev.commence_time).slice(0,10);
   // 1. gecis: konsensus; 2. adim: acilis oranlarini TEK RPC ile al/yaz (eski: mac basina 1 RPC)
@@ -454,12 +485,25 @@ async function fetchFixtures(sport){
     const threshold=params.edge_threshold_base*params.family_correction;
     const extra={ commence:ev.commence_time, params_version:params.version, books_used:cons.books, __wc:isWC };
     if(inj&&(injd.h||injd.a)) extra.inj_out={home:injd.h,away:injd.a};
-    out.push(buildAuto(ev.home_team,ev.away_team,est.lh,est.la,cons.odds,indep,params.rho,threshold,extra,x12s,{...pinnacleFair(ev), book:cons.book}));
+    const pin=pinnacleFair(ev);
+    const a=buildAuto(ev.home_team,ev.away_team,est.lh,est.la,cons.odds,indep,params.rho,threshold,extra,x12s,{...pin, book:cons.book});
+    // Yuksek isabetli ek secim (Cifte Sans / Beraberlikte Iade / Ust 1,5 / Alt 3,5): ayni fiyat-edge esigi, form/Elo sarti
+    if(a.source!=="market"){
+      const pf=pin.fair||{}; const fp=(pf["1"]&&pf["X"]&&pf["2"])? {"1":1/pf["1"],"X":1/pf["X"],"2":1/pf["2"]} : null;
+      const kp={}, mp={}; for(const x of a.markets){ kp[x.code]=x.model/100; mp[x.code]=x.mkt/100; }
+      const ou=altOU(alt[ev.id]); const pm=probs(a.model_lh,a.model_la,params.rho);
+      if(ou&&ou.O15) ou.O15.kp=pm.O15; if(ou&&ou.U35) ou.U35.kp=1-pm.O35;
+      const x=extraPick({ best:cons.odds, book:cons.book, fp, kp, mp, ou, thr:threshold, maxEdge:PIN_EDGE_MAX_PCT });
+      if(x){ const kel=Math.max(0,(x.prob*x.price-1)/(x.price-1));
+        a.xpick={ code:x.code, name:XMKN[x.code], odds:+x.price.toFixed(3), prob:+(x.prob*100).toFixed(1), fair_odds:+(1/x.prob).toFixed(3), pin_edge:+x.pe.toFixed(2),
+          legs:x.legs.map((l)=>({ code:l.code, odds:l.odds, book:l.book, share:+l.share.toFixed(3) })), kelly_pct:+Math.min(KELLY_CAP_PCT,KELLY_FRACTION*kel*100).toFixed(1), value:true }; }
+    }
+    out.push(a);
   }
   const pk=out.filter(m=>m.pick&&m.pick.kelly_pct);
   const totK=pk.reduce((s,m)=>s+m.pick.kelly_pct,0);
   if(totK>15) for(const m of pk) m.pick.kelly_pct=+(m.pick.kelly_pct*15/totK).toFixed(1);
-  return { matches:out, count:out.length, form_count:formCount, params_version:params.version, rho:params.rho, league_x12s:x12s, halflife_days:halflife, injury_signal:!!inj, edge_threshold_pct:+(params.edge_threshold_base*params.family_correction).toFixed(2), rule:"price_edge" };
+  return { matches:out, count:out.length, form_count:formCount, params_version:params.version, rho:params.rho, league_x12s:x12s, halflife_days:halflife, injury_signal:!!inj, edge_threshold_pct:+(params.edge_threshold_base*params.family_correction).toFixed(2), rule:"price_edge", extra_markets:true };
 }
 
 async function savePreds(picks){ try{ const {data,error}=await sb().rpc("bahis_save_predictions",{p:picks}); if(error) return {ok:false,error:error.message}; return {ok:true,saved:data}; }catch(e){ return {ok:false,error:String(e)}; } }
@@ -483,7 +527,8 @@ async function settle(){ try{
       // 10 gun sonra skor yok (ertelenen/iptal/eslesmeyen isim): void -> tuttu/tutmadi sayilmaz, settle/capture cron'larini surekli tetiklemez
       if(!sc){ if(ageDays(r.match_date)>10){ updates.push({id:r.id, result:"void"}); voided++; } continue; }
       if(sp===WORLD_CUP_SPORT) wcSettled[norm(sc.home)+"|"+norm(sc.away)]=sc;
-      updates.push({id:r.id, actual_score:sc.hs+"-"+sc.as, result: evalMkt(r.market,sc.hs,sc.as)?"hit":"miss"}); } }
+      const dnbPush=String(r.market).startsWith("DNB")&&sc.hs===sc.as; // beraberlikte iade: para geri -> void
+      updates.push({id:r.id, actual_score:sc.hs+"-"+sc.as, result: dnbPush? "void" : (evalMkt(r.market,sc.hs,sc.as)?"hit":"miss")}); } }
   if(updates.length){ const {data,error:e2}=await sb().rpc("bahis_set_results",{p:updates}); if(e2) return {error:e2.message};
     const eloUpd=await applyEloUpdates(wcSettled);
     return {settled:data, voided, elo_updated:eloUpd}; }
@@ -712,6 +757,15 @@ async function backtest(body){
     pr[B]++; if(won) pr[H]++; pr[F]+= won? odds-1 : -1; if(pc&&pc>1){ pr[N]++; const c=odds/pc-1; pr[S]+=c; if(c>0) pr[P]++; }
     if(!isOU){ const bn=ODDS_BINS.find((x)=>odds<=x[0])[1]; const b=pr.bins[bn]||(pr.bins[bn]={bets:0,hits:0,flat:0,clvN:0,clvSum:0}); b.bets++; if(won) b.hits++; b.flat+= won? odds-1 : -1; if(pc&&pc>1){ b.clvN++; b.clvSum+=odds/pc-1; } } };
   const R=[]; // raw walk-forward (model,market,outcome) rows for fit_blend stacking
+  // 2026-09-27 ek pazarlar. Cifte sans ve beraberlikte iade (DNB) 1X2 fiyatlarindan BIREBIR kurulabilir (dutching):
+  // DC 1X fiyati = 1/(1/o1+1/oX); DNB ev fiyati = o1*(oX-1)/oX. Boylece CSV'deki Max/Pinnacle oranlariyla gercek backtest yapilir.
+  // Ust 1,5 ve KG icin CSV'de oran yok -> yalniz kalibrasyon (tahmin edilen olasilik vs gerceklesen).
+  const xp={ dc:{bets:0,hits:0,flat:0,clvN:0,clvSum:0,bins:{}}, dnb:{bets:0,hits:0,push:0,flat:0,clvN:0,clvSum:0,bins:{}} };
+  const XB=[[1.3,"<=1.3"],[1.5,"1.3-1.5"],[1.8,"1.5-1.8"],[2.2,"1.8-2.2"],[1e9,">2.2"]];
+  const xbin=(t,odds,pl,won)=>{ const k=XB.find((x)=>odds<=x[0])[1]; const b=t.bins[k]||(t.bins[k]={bets:0,hits:0,flat:0}); b.bets++; if(won) b.hits++; b.flat+=pl; };
+  const CAL=[[0.5,"<50"],[0.6,"50-60"],[0.7,"60-70"],[0.8,"70-80"],[0.9,"80-90"],[1.01,"90+"]];
+  const cal={ o15:{model:{},market:{}}, btts:{model:{}}, base:{n:0,o15:0,btts:0} };
+  const calAdd=(t,p,y)=>{ const k=CAL.find((x)=>p<x[0])[1]; const b=t[k]||(t[k]={n:0,sumP:0,hits:0}); b.n++; b.sumP+=p; b.hits+=y; };
   for(let i=warm;i<raw.length;i++){ const r=raw[i];
     if(!r.oh||!r.od||!r.oa) continue;
     if(!S || r.t-lastFit>REFIT_MS){ S=fitUpTo(i,r.t); lastFit=r.t; }
@@ -751,7 +805,30 @@ async function backtest(body){
       const maxs=[r.xh,r.xd,r.xa], ks=[k1-mH,kX-mD,k2-mA], pcs=[r.ch,r.cd,r.ca];
       for(let j=0;j<3;j++){ if(!pins[j]||pins[j]<=1||!maxs[j]||maxs[j]<=1) continue; const pe=maxs[j]/pins[j]-1;
         if(pe*100>=cfg.pinMin && pe*100<=cfg.pinMax && ks[j]>=0 && (!(cfg.maxOdds>0)||maxs[j]<=cfg.maxOdds) && (!bestP||pe>bestP.pe)) bestP={pe,j}; }
-      if(bestP){ prBet(o===bestP.j, maxs[bestP.j], pcs[bestP.j], false); } }
+      if(bestP){ prBet(o===bestP.j, maxs[bestP.j], pcs[bestP.j], false); }
+      // ---- Cifte sans (1X, X2, 12) ve DNB: referans Pinnacle adil, fiyat = Max oranlarla dutching, tek bahis/mac ----
+      if(pins[0]&&r.xh>1&&r.xd>1&&r.xa>1){
+        const fp=[1/pins[0],1/pins[1],1/pins[2]]; const kk=[k1,kX,k2], mm=[mH,mD,mA];
+        let cf=null; if(r.ch>1&&r.cd>1&&r.ca>1){ const f=shinDevig([1/r.ch,1/r.cd,1/r.ca]); cf=f; }
+        const dutch=(a,b)=>1/(1/a+1/b);
+        const DC=[[0,1],[1,2],[0,2]]; let bd=null;
+        for(const [a,b] of DC){ const price=dutch(maxs[a],maxs[b]); const pf=fp[a]+fp[b]; const pe=price*pf-1;
+          if(price<=cfg.maxOdds && pe*100>=cfg.pinMin && pe*100<=cfg.pinMax && (kk[a]+kk[b])>=(mm[a]+mm[b]) && (!bd||pe>bd.pe)) bd={pe,price,a,b}; }
+        if(bd){ const won=(o===bd.a||o===bd.b); const pl=won? bd.price-1 : -1; xp.dc.bets++; if(won) xp.dc.hits++; xp.dc.flat+=pl; xbin(xp.dc,bd.price,pl,won);
+          if(cf){ xp.dc.clvN++; xp.dc.clvSum+=bd.price*(cf[bd.a]+cf[bd.b])-1; } }
+        let bn=null;
+        for(const j of [0,2]){ const price=maxs[j]*(maxs[1]-1)/maxs[1]; const q=2-j; const pf=fp[j]/(fp[j]+fp[q]); const pe=price*pf-1;
+          if(price<=cfg.maxOdds && pe*100>=cfg.pinMin && pe*100<=cfg.pinMax && kk[j]/(kk[j]+kk[q])>=mm[j]/(mm[j]+mm[q]) && (!bn||pe>bn.pe)) bn={pe,price,j,q}; }
+        if(bn){ const push=(o===1), won=(o===bn.j); const pl=push? 0 : (won? bn.price-1 : -1); xp.dnb.bets++; if(won) xp.dnb.hits++; if(push) xp.dnb.push++; xp.dnb.flat+=pl; xbin(xp.dnb,bn.price,pl,won);
+          if(cf&&!push){ xp.dnb.clvN++; xp.dnb.clvSum+=bn.price*(cf[bn.j]/(cf[bn.j]+cf[bn.q]))-1; } }
+      } }
+    // ---- Ust 1,5 / KG kalibrasyonu (oran yok): model = form+piyasa lambdalari; piyasa = O2.5 ortalama oranindan Poisson toplam ----
+    { const g=r.gh+r.ga; const y15=g>=2?1:0, yb=(r.gh>=1&&r.ga>=1)?1:0;
+      const e1=Math.exp(-lh), e2=Math.exp(-la), eT=Math.exp(-(lh+la));
+      const pO15=1-eT*(1+lh+la), pB=(1-e1)*(1-e2);
+      calAdd(cal.o15.model,pO15,y15); calAdd(cal.btts.model,pB,yb);
+      if(mu!=null){ const pm15=1-Math.exp(-mu)*(1+mu); calAdd(cal.o15.market,pm15,y15); }
+      cal.base.n++; cal.base.o15+=y15; cal.base.btts+=yb; }
     // ---- Ust/Alt 2.5 ----
     if(r.po&&r.pu&&r.po>1&&r.pu>1){
       const mO=(1/r.po)/((1/r.po)+(1/r.pu)); const kO=mO+cfg.ouShrink*(pm.o-mO); const over=(r.gh+r.ga)>2.5;
@@ -783,6 +860,12 @@ async function backtest(body){
       x12_by_odds: Object.fromEntries(ODDS_BINS.map((x)=>x[1]).filter((k)=>pr.bins[k]).map((k)=>{ const b=pr.bins[k]; return [k,{ bets:b.bets, hit_rate:+(b.hits/b.bets).toFixed(3), flat_roi_pct:+(100*b.flat/b.bets).toFixed(1), clv_close_avg_pct:b.clvN? +(100*b.clvSum/b.clvN).toFixed(2):null }]; })),
       x12:{ bets:pr.bets, hit_rate:pr.bets? +(pr.hits/pr.bets).toFixed(3):null, flat_roi_pct:pr.bets? +(100*pr.flat/pr.bets).toFixed(1):null, clv_close_n:pr.clvN, clv_close_avg_pct:pr.clvN? +(100*pr.clvSum/pr.clvN).toFixed(2):null, clv_pos_rate:pr.clvN? +(pr.clvPos/pr.clvN).toFixed(3):null },
       ou:{ bets:pr.ouBets, hit_rate:pr.ouBets? +(pr.ouHits/pr.ouBets).toFixed(3):null, flat_roi_pct:pr.ouBets? +(100*pr.ouFlat/pr.ouBets).toFixed(1):null, clv_close_n:pr.ouClvN, clv_close_avg_pct:pr.ouClvN? +(100*pr.ouClvSum/pr.ouClvN).toFixed(2):null, clv_pos_rate:pr.ouClvN? +(pr.ouClvPos/pr.ouClvN).toFixed(3):null } },
+    extra_markets: (()=>{ const f=(t)=>({ bets:t.bets, hit_rate:t.bets? +(t.hits/t.bets).toFixed(3):null, push:t.push, flat_roi_pct:t.bets? +(100*t.flat/t.bets).toFixed(1):null, clv_close_avg_pct:t.clvN? +(100*t.clvSum/t.clvN).toFixed(2):null,
+        by_odds:Object.fromEntries(XB.map((x)=>x[1]).filter((k)=>t.bins[k]).map((k)=>{ const b=t.bins[k]; return [k,{bets:b.bets,hit_rate:+(b.hits/b.bets).toFixed(3),flat_roi_pct:+(100*b.flat/b.bets).toFixed(1)}]; })) });
+      const c=(t)=>Object.fromEntries(CAL.map((x)=>x[1]).filter((k)=>t[k]).map((k)=>{ const b=t[k]; return [k,{n:b.n,pred:+(b.sumP/b.n).toFixed(3),hit:+(b.hits/b.n).toFixed(3)}]; }));
+      return { double_chance:f(xp.dc), draw_no_bet:f(xp.dnb),
+        o15_calibration:{ base_rate:cal.base.n? +(cal.base.o15/cal.base.n).toFixed(3):null, model:c(cal.o15.model), market_poisson:c(cal.o15.market) },
+        btts_calibration:{ base_rate:cal.base.n? +(cal.base.btts/cal.base.n).toFixed(3):null, model:c(cal.btts.model) } }; })(),
     clv_pinnacle: clv.n? { n:clv.n, avg_pct_max_odds:+(100*clv.sumMax/clv.n).toFixed(2), avg_pct_avg_odds:+(100*clv.sumAvg/clv.n).toFixed(2), pos_rate_max_odds:+(clv.posMax/clv.n).toFixed(3) } : null,
     ou: ou.n? { n:ou.n, bets:ou.bets, hit_rate:ou.bets? +(ou.hits/ou.bets).toFixed(3):null, flat_roi_pct:ou.bets? +(100*ou.flat/ou.bets).toFixed(1):null,
       brier_model:+(ou.brK/ou.n).toFixed(4), brier_market:+(ou.brM/ou.n).toFixed(4),
@@ -831,6 +914,11 @@ async function autosave(){
           edge_pct:m.pick.edge, odds:m.pick.odds, odds_pinnacle:m.pick.odds_pin, pin_edge_pct:m.pick.pin_edge, is_value:true, source:"autosave", commence_time:m.commence,
           lambda_home:m.model_lh, lambda_away:m.model_la, params_version:m.params_version });
       }
+      for(const m of (fx.matches||[])){ const x=m.xpick; if(m.live||!x||!m.commence) continue;
+        const dt=new Date(m.commence).getTime()-Date.now(); if(dt<=0||dt>8*86400000) continue;
+        picks.push({ sport:sp, home:m.home, away:m.away, match_date:String(m.commence).slice(0,10), market:x.code, family:"extra",
+          model_prob:x.prob/100, market_prob:x.prob/100, edge_pct:0, odds:x.odds, odds_pinnacle:x.fair_odds, pin_edge_pct:x.pin_edge, is_value:true, source:"autosave", commence_time:m.commence,
+          lambda_home:m.model_lh, lambda_away:m.model_la, params_version:m.params_version }); }
       let saved=0;
       if(picks.length){ const r=await savePreds(picks); saved=r.saved||0; }
       detail[sp]={candidates:picks.length, saved};
@@ -867,6 +955,16 @@ Deno.serve(async (req)=>{
         return J({key:true, status:r.status, results:d.results??null, errors:d.errors??null,
           sample:(d.response||[]).slice(0,3).map((x)=>({team:x.team&&x.team.name, player:x.player&&x.player.name, type:x.player&&x.player.type}))});
       }catch(e){ return J({key:true, fetch_error:String(e)}); }
+    }
+    if(body.action==="markets_probe"){ // ek pazar kapsami: tek mac, AB bolgesi (anahtar donmez)
+      const sp=body.sport||"soccer_epl"; const mk=body.markets||"double_chance,draw_no_bet,btts,alternate_totals";
+      try{ const er=await fetch(`https://api.the-odds-api.com/v4/sports/${sp}/events?apiKey=${ODDS_KEY}`); const evs=await er.json();
+        const ev=(evs||[]).sort((a,b)=>String(a.commence_time).localeCompare(String(b.commence_time)))[Math.min(+body.idx||0,(evs||[]).length-1)]; if(!ev) return J({events:0});
+        const r=await fetch(`https://api.the-odds-api.com/v4/sports/${sp}/events/${ev.id}/odds?apiKey=${ODDS_KEY}&regions=${body.regions||"eu"}&markets=${mk}&oddsFormat=decimal`);
+        const d=await r.json(); const cov={};
+        for(const b of (d.bookmakers||[])) for(const m of (b.markets||[])){ const c=cov[m.key]||(cov[m.key]={books:[],lines:{}}); c.books.push(b.key); for(const o of (m.outcomes||[])){ const L=(o.name||"")+(o.point!=null?" "+o.point:""); c.lines[L]=(c.lines[L]||0)+1; } }
+        return J({ status:r.status, event:ev.home_team+" - "+ev.away_team, commence:ev.commence_time, credits_last:r.headers.get("x-requests-last"), credits_remaining:r.headers.get("x-requests-remaining"), coverage:cov });
+      }catch(e){ return J({fetch_error:String(e)}); }
     }
     if(body.action==="fd_debug"){ // football-data.org anahtar/plan tanisi (anahtar donmez)
       if(!FD_KEY) return J({key:false});

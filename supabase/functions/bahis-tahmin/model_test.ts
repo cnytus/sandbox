@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Calistir: npx deno test supabase/functions/bahis-tahmin/model_test.ts
 import { assert, assertEquals, assertAlmostEquals } from "jsr:@std/assert@1";
-import { probs, probsLite, shinDevig, median, norm, findKey, findPair, evalMkt } from "./model.ts";
+import { probs, probsLite, shinDevig, median, norm, findKey, findPair, evalMkt, extraPick, dutchPrice, dnbPrice } from "./model.ts";
 
 Deno.test("probs: olasiliklar 1'e toplanir, U=1-O, top 4 skor", () => {
   const r = probs(1.5, 1.1, -0.12);
@@ -58,4 +58,35 @@ Deno.test("evalMkt: 7 pazar", () => {
   assertEquals(evalMkt("O", 2, 1), true); assertEquals(evalMkt("U", 1, 1), true);
   assertEquals(evalMkt("BY", 1, 1), true); assertEquals(evalMkt("BN", 0, 3), true);
   assertEquals(evalMkt("O", 1, 1), false); assertEquals(evalMkt("BY", 0, 3), false);
+});
+
+Deno.test("evalMkt: ek pazarlar (DC, DNB, Ust 1.5, Alt 3.5)", () => {
+  assertEquals(evalMkt("DC1X", 1, 1), true); assertEquals(evalMkt("DC1X", 0, 1), false);
+  assertEquals(evalMkt("DCX2", 0, 0), true); assertEquals(evalMkt("DC12", 1, 1), false); assertEquals(evalMkt("DC12", 2, 1), true);
+  assertEquals(evalMkt("DNB1", 2, 0), true); assertEquals(evalMkt("DNB2", 2, 0), false);
+  assertEquals(evalMkt("O15", 1, 1), true); assertEquals(evalMkt("O15", 1, 0), false);
+  assertEquals(evalMkt("U35", 2, 1), true); assertEquals(evalMkt("U35", 2, 2), false);
+});
+
+Deno.test("dutching: DC ve DNB fiyati", () => {
+  assertAlmostEquals(dutchPrice(2, 4), 1 / (0.5 + 0.25), 1e-12);        // 1.333
+  assertAlmostEquals(dnbPrice(2, 3.5), 2 * 2.5 / 3.5, 1e-12);          // 1.4286
+});
+
+Deno.test("extraPick: esik, oran siniri, model uyumu", () => {
+  const fp = { "1": 0.55, "X": 0.25, "2": 0.20 };                    // adil: 1X=0.80 -> 1.25
+  const base = { fp, kp: fp, mp: fp, thr: 2, maxEdge: 10, book: { "1": "A", "X": "B", "2": "C" } };
+  // 1X dutch = 1/(1/1.95+1/4.6) = 1.3696 -> pe = 1.3696*0.80-1 = +9.6% -> secilir
+  const x = extraPick({ ...base, best: { "1": 1.95, "X": 4.6, "2": 5.0 } });
+  assertEquals(x.code, "DC1X"); assert(x.pe > 9 && x.pe < 10);
+  assertAlmostEquals(x.legs[0].share + x.legs[1].share, 1, 1e-12);
+  // adil fiyat (edge 0) -> aday yok
+  assertEquals(extraPick({ ...base, best: { "1": 1 / 0.55, "X": 4, "2": 5 } }), null);
+  // model karsi (kp < mp) -> DC reddedilir
+  const kp = { "1": 0.50, "X": 0.25, "2": 0.25 };
+  assertEquals(extraPick({ ...base, kp, best: { "1": 1.95, "X": 4.6, "2": 4.0 } }), null);
+  // Ust 1.5: fiyat 1.30, adil olasilik 0.80 -> pe +4% -> secilir; 1.9 oran sinir disi
+  const o = extraPick({ thr: 2, maxEdge: 10, ou: { O15: { price: 1.30, book: "Z", fp: 0.80, kp: 0.82 } } });
+  assertEquals(o.code, "O15");
+  assertEquals(extraPick({ thr: 2, maxEdge: 10, ou: { O15: { price: 1.9, book: "Z", fp: 0.56, kp: 0.6 } } }), null);
 });
