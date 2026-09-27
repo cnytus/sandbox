@@ -2,6 +2,7 @@
 // Calistir: npx deno test supabase/functions/bahis-tahmin/model_test.ts
 import { assert, assertEquals, assertAlmostEquals } from "jsr:@std/assert@1";
 import { probs, probsLite, shinDevig, median, norm, findKey, findPair, evalMkt, extraPick, dutchPrice, dnbPrice } from "./model.ts";
+import { Phi, overWP, fitMu, sideWP, lineResult } from "./model.ts";
 
 Deno.test("probs: olasiliklar 1'e toplanir, U=1-O, top 4 skor", () => {
   const r = probs(1.5, 1.1, -0.12);
@@ -91,4 +92,16 @@ Deno.test("extraPick: esik, oran siniri, model uyumu", () => {
   assertEquals(extraPick({ thr: 2, maxEdge: 10, ou: { O15: { price: 1.9, book: "Z", fp: 0.56, kp: 0.6 } } }), null);
   // Ust/Alt icin edge ust siniri %5 (Footiqo backtest'i): 1.35 x 0.80 = +8% -> reddedilir
   assertEquals(extraPick({ thr: 2, maxEdge: 10, ou: { O15: { price: 1.35, book: "Z", fp: 0.80, kp: 0.82 } } }), null);
+});
+
+Deno.test("basketbol cizgi cevirisi + sonuc", () => {
+  assert(Math.abs(Phi(0)-0.5)<1e-7 && Math.abs(Phi(1.96)-0.975)<1e-4);
+  const [w,pu]=overWP(170.5,170.5,16); assert(Math.abs(w-0.5)<1e-6 && pu===0);
+  // tam sayi cizgide kosullu adil olasilik geri kurulur, iade ~%2-3
+  const mu=fitMu(170,0.55,16), [w2,p2]=overWP(170,mu,16); assert(Math.abs(w2/(1-p2)-0.55)<1e-6 && p2>0.02 && p2<0.03);
+  // Pinnacle 170'te adil %50 ise Alt 170.5 >%50 kazanir (170 artik kazanc)
+  const [wu]=sideWP("U",170.5,fitMu(170,0.5,16),16); assert(wu>0.51);
+  assertEquals(lineResult("O@170.5",90,81),"hit"); assertEquals(lineResult("U@170",85,85),"void"); assertEquals(lineResult("U@170.5",85,86),"miss");
+  assertEquals(lineResult("H1@-5.5",90,84),"hit"); assertEquals(lineResult("H1@-5.5",90,85),"miss"); assertEquals(lineResult("H2@+5",90,85),"void");
+  assertEquals(lineResult("H2@+5.5",86,81),"hit"); assertEquals(lineResult("O15",2,1),null);
 });

@@ -79,3 +79,41 @@ export function extraPick(o){
     add({code,price:u.price,prob:u.fp,pe:(u.price*u.fp-1)*100,max:XMAX.OU,emax:XMAXE.OU,agree:u.kp>=u.fp-1e-9,legs:[{code,odds:u.price,book:u.book||null,share:1}]}); }
   return c.sort((a,z)=>z.pe-a.pe)[0]||null;
 }
+
+// ---- Basketbol alt/ust + handikap (Faz 2, 2026-09-27) ----
+// Pinnacle cizgisi + adil olasiliktan normal dagilim ortalamasi (mu) kurulur, baska bahiscinin cizgisi bu mu ile fiyatlanir.
+// Skorlar tam sayi: sureklilik duzeltmesi; tam sayi cizgide iade (push). Pinnacle'in iki yonlu adil fiyati iadesiz kosullu.
+// Kodlar: "O@170.5" / "U@170.5" (toplam sayi), "H1@-5.5" / "H2@+5.5" (handikapli MS, uzatma dahil).
+export function Phi(x){ const z=Math.abs(x)/Math.SQRT2, t=1/(1+0.3275911*z);
+  const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-z*z);
+  return x>=0? 0.5*(1+y) : 0.5*(1-y); }
+// X ~ N(mu,s) tam sayi; "X > L" icin [kazanma, iade]
+export function overWP(L,mu,s){ if(Math.abs(L-Math.round(L))<1e-9){ const a=Phi((L+.5-mu)/s), b=Phi((L-.5-mu)/s); return [1-a, a-b]; } return [1-Phi((L-mu)/s), 0]; }
+export function fitMu(L,pOver,s){ let lo=L-80, hi=L+80; for(let i=0;i<80;i++){ const m=(lo+hi)/2, [w,pu]=overWP(L,m,s); if(w/(1-pu)<pOver) lo=m; else hi=m; } return (lo+hi)/2; }
+// taraf "O": X > L, "U": X < L -> [kazanma, iade]
+export function sideWP(side,L,mu,s){ const [w,pu]=overWP(L,mu,s); return side==="O"? [w,pu] : [1-w-pu,pu]; }
+export function lineResult(code,hs,as){
+  let m=/^([OU])@(\d+(?:\.\d+)?)$/.exec(code||"");
+  if(m){ const L=+m[2], t=hs+as; if(t===L) return "void"; return ((m[1]==="O")===(t>L))? "hit" : "miss"; }
+  m=/^H([12])@([+-]?\d+(?:\.\d+)?)$/.exec(code||"");
+  if(m){ const d=(m[1]==="1"? hs-as : as-hs)+(+m[2]); if(d===0) return "void"; return d>0? "hit" : "miss"; }
+  return null; }
+
+// Pinnacle {L, p(X>L)} + bahisci teklifleri [taraf, L, oran, bahisci]; spreads'te X = ev-dep farki (ev -5.5 <=> X > 5.5)
+export function lineQuotes(ev,key,exch=/betfair_ex|matchbook/){ let pin=null; const q=[];
+  for(const b of (ev.bookmakers||[])){ const m=(b.markets||[]).find((x)=>x.key===key); if(!m) continue; let L,po,pu;
+    if(key==="totals"){ const ov=m.outcomes.find((o)=>o.name==="Over"), un=m.outcomes.find((o)=>o.name==="Under"); if(!ov||!un||ov.point==null||ov.point!==un.point) continue; L=ov.point; po=ov.price; pu=un.price; }
+    else { const h=m.outcomes.find((o)=>o.name===ev.home_team), a=m.outcomes.find((o)=>o.name===ev.away_team); if(!h||!a||h.point==null) continue; L=-h.point; po=h.price; pu=a.price; }
+    if(!(po>1&&pu>1)) continue;
+    if(b.key==="pinnacle") pin={ L, p:shinDevig([1/po,1/pu])[0] };
+    if(!exch.test(b.key||"")) q.push(["O",L,po,b.title||b.key],["U",L,pu,b.title||b.key]); }
+  return { pin, q }; }
+const fmtHcp=(x)=>(x>0?"+":"")+(+x.toFixed(1));
+const lineCode=(key,side,L)=> key==="totals"? side+"@"+L : (side==="O"? "H1@"+fmtHcp(-L) : "H2@"+fmtHcp(L));
+export function parseLine(code){ let m=/^([OU])@(.+)$/.exec(code||""); if(m) return ["totals",m[1],+m[2]];
+  m=/^H([12])@(.+)$/.exec(code||""); if(m) return ["spreads", m[1]==="1"?"O":"U", m[1]==="1"? -(+m[2]) : +m[2]]; return null; }
+// En iyi (en yuksek beklenen deger) teklif; Pinnacle cizgisinden en fazla win sayi uzak. e = oran*kazanma + iade - 1
+export function bestLineRaw(ev,key,s,win=1.5,exch=/betfair_ex|matchbook/){ const {pin,q}=lineQuotes(ev,key,exch); if(!pin||!s) return null; const mu=fitMu(pin.L,pin.p,s); let best=null;
+  for(const [side,L,price,book] of q){ if(Math.abs(L-pin.L)>win) continue; const [w,pu]=sideWP(side,L,mu,s), e=price*w+pu-1;
+    if(!best||e>best.e) best={ code:lineCode(key,side,L), price, book, w, pu, e }; }
+  return best; }
