@@ -45,4 +45,33 @@ export function findPair(home,away,map){
   if(cands.length>1) console.warn("findPair ambiguous", home, away, cands);
   return null;
 }
-export function evalMkt(code,hs,as){ const tot=hs+as; switch(code){ case"1":return hs>as; case"X":return hs===as; case"2":return as>hs; case"O":return tot>2.5; case"U":return tot<2.5; case"BY":return hs>=1&&as>=1; case"BN":return !(hs>=1&&as>=1);} return false; }
+export function evalMkt(code,hs,as){ const tot=hs+as; switch(code){ case"1":return hs>as; case"X":return hs===as; case"2":return as>hs; case"O":return tot>2.5; case"U":return tot<2.5; case"BY":return hs>=1&&as>=1; case"BN":return !(hs>=1&&as>=1);
+  // 2026-09-27 ek pazarlar (DNB beraberlikte iade: beraberlik settle'da void yapilir, burada false)
+  case"DC1X":return hs>=as; case"DCX2":return as>=hs; case"DC12":return hs!==as; case"DNB1":return hs>as; case"DNB2":return as>hs; case"O15":return tot>1.5; case"U35":return tot<3.5;} return false; }
+
+// ---- Yuksek isabetli ek secimler (2026-09-27) ----
+// Cifte sans / beraberlikte iade 1X2 fiyatlarindan birebir kurulur (dutching): DC = 1/(1/o1+1/oX), DNB1 = o1*(oX-1)/oX.
+// Backtest (6 lig x 4 sezon, Max oran vs Pinnacle adil, esik %2): DC oran <=1,8 -> 136 bahis %81 isabet ROI ~+15; >1,8 negatif.
+// DNB oran <=2,2 -> 161 bahis ROI ~+11. Ust 1,5 / Alt 3,5 icin CSV'de oran yok (fiyat backtest'i yok); referans Pinnacle alternate_totals.
+export const XMAX={ DC:1.8, DNB:2.2, OU:1.8 };
+export const dutchPrice=(a,b)=>1/(1/a+1/b);
+export const dnbPrice=(o,ox)=>o*(ox-1)/ox;
+// o={best:{1,X,2}, book:{1,X,2}, fp:{1,X,2} Pinnacle adil olasilik (yoksa null), kp/mp: model/piyasa olasiligi,
+//    ou:{O15:{price,book,fp,kp},U35:{...}}, thr: esik %, maxEdge: ust sinir %}. En yuksek fiyat-edge'li aday ya da null.
+export function extraPick(o){
+  const c=[]; const b=o.best||{}, bk=o.book||{}, fp=o.fp, kp=o.kp||{}, mp=o.mp||{};
+  const add=(x)=>{ if(x.price>1&&x.price<=x.max&&x.pe>=o.thr&&x.pe<=o.maxEdge&&x.agree) c.push(x); };
+  if(fp){
+    for(const [x,y,code] of [["1","X","DC1X"],["X","2","DCX2"],["1","2","DC12"]]){ if(!(b[x]>1&&b[y]>1)) continue;
+      const price=dutchPrice(b[x],b[y]), pf=fp[x]+fp[y], sx=(1/b[x])/(1/b[x]+1/b[y]);
+      add({code,price,prob:pf,pe:(price*pf-1)*100,max:XMAX.DC,agree:(kp[x]+kp[y])>=(mp[x]+mp[y])-1e-9,
+        legs:[{code:x,odds:b[x],book:bk[x]||null,share:sx},{code:y,odds:b[y],book:bk[y]||null,share:1-sx}]}); }
+    for(const [j,q,code] of [["1","2","DNB1"],["2","1","DNB2"]]){ if(!(b[j]>1&&b["X"]>1)) continue;
+      const price=dnbPrice(b[j],b["X"]), pf=fp[j]/(fp[j]+fp[q]), sx=1/b["X"];
+      add({code,price,prob:pf,pe:(price*pf-1)*100,max:XMAX.DNB,agree:kp[j]/(kp[j]+kp[q])>=mp[j]/(mp[j]+mp[q])-1e-9,
+        legs:[{code:j,odds:b[j],book:bk[j]||null,share:1-sx},{code:"X",odds:b["X"],book:bk["X"]||null,share:sx}]}); }
+  }
+  for(const code of ["O15","U35"]){ const u=(o.ou||{})[code]; if(!u||!(u.price>1)||!(u.fp>0)) continue;
+    add({code,price:u.price,prob:u.fp,pe:(u.price*u.fp-1)*100,max:XMAX.OU,agree:u.kp>=u.fp-1e-9,legs:[{code,odds:u.price,book:u.book||null,share:1}]}); }
+  return c.sort((a,z)=>z.pe-a.pe)[0]||null;
+}
