@@ -10,12 +10,12 @@
 //      P4 CLV-driven calibration; P5 team home advantage; P6 draw breakdown; P7 exposure cap.
 // v9.x) CSV source (T1 + SoT blend); DC ratings; rest; steam. v8.x/v7 in git history.
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick } from "./model.ts";
+import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick, fitMu, sideWP, lineResult, lineQuotes, parseLine, bestLineRaw } from "./model.ts";
 
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.8";
+const VERSION="10.9";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -101,6 +101,12 @@ const API_FOOTBALL_LEAGUE={ soccer_epl:39, soccer_spain_la_liga:140, soccer_ital
 // Esik %2 sabit: Euroleague 25/26 backtest'i (tools/basket_backtest.py) %2'de 38 bahis, kapanis adiline karsi CLV +%2,3 (±0,95).
 // Futbol kalibrasyonu (calibrate) basketbol satirlarini kullanmaz; esigi etkilemez.
 const BASKET_SPORTS=["basketball_nba","basketball_euroleague"]; const BASKET_PE_MIN=2;
+// Faz 2 (2026-09-27): Toplam Sayi A/U + Handikapli MS. Pinnacle genelde tam sayi cizgi (170, -5), bahisciler bucuklu (170.5, -5.5):
+// Pinnacle cizgisi+adil olasiliktan normal dagilim ortalamasi kurulur, bahiscinin cizgisi o ortalamayla fiyatlanir (model.ts fitMu/sideWP).
+// Sigma: NBA SBRO kapanis artiklari (fark ~13, toplam ~18); Euroleague fark sapmasi 12,8, toplam 16 varsayim.
+// Backtest Euroleague 01-05.2026, esik %2: toplam 13 bahis CLV +2,29 (±0,65), handikap 15 bahis +2,77 (±1,01). Handikap sigmaya
+// duyarli (sigma 15 -> +0,48); toplam degil (14..18 -> +3,4..+1,6). Pinnacle cizgisinden en fazla 1,5 sayi uzak cizgiler.
+const BASKET_SIGMA={ basketball_euroleague:{ totals:16, spreads:13 }, basketball_nba:{ totals:18, spreads:13 } }; const BASKET_LINE_WIN=1.5;
 const isBasket=(sp)=>String(sp||"").startsWith("basketball_");
 const AUTOSAVE_SPORTS=[...new Set([...Object.keys(CSV_COMP), ...Object.keys(COMP), ...BASKET_SPORTS])];
 const WC_HOSTS=new Set(["usa","unitedstates","canada","mexico"]);
@@ -398,7 +404,7 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_
 
 async function fetchOddsEvents(sport){
   try{ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:sport,max_age_seconds:ODDS_CACHE_TTL_S}); if(data) return { events:data, cached:true }; }catch(e){ warn("odds cache read",e); }
-  const res=await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=${isBasket(sport)?"h2h":"h2h,totals"}&oddsFormat=decimal`);
+  const res=await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=${isBasket(sport)?"h2h,spreads,totals":"h2h,totals"}&oddsFormat=decimal`);
   if(!res.ok){ warn(`odds API ${sport} HTTP`,res.status); return { error:res.status }; }
   const events=await res.json();
   try{ await sb().rpc("bahis_set_odds_cache",{sp:sport,p:events}); }catch(e){ warn("odds cache write",e); }
@@ -431,6 +437,10 @@ function altOU(entry){
   return out;
 }
 
+function bestLine(ev,key,s){ const best=bestLineRaw(ev,key,s,BASKET_LINE_WIN,EXCHANGE_KEYS); if(!best) return null; const pe=+(best.e*100).toFixed(2);
+  return { code:best.code, name:best.code, family:key==="totals"?"ou":"hcp", model:+(best.w*100).toFixed(1), mkt:+(best.w*100).toFixed(1), edge:0, odds:best.price,
+    odds_pin:null, odds_pin_fair:+((1-best.pu)/best.w).toFixed(3), pin_edge:pe, book:best.book, value: pe>=BASKET_PE_MIN && pe<=PIN_EDGE_MAX_PCT && best.price<=PIN_MAX_ODDS }; }
+
 async function fetchBasket(sport){
   const oe=await fetchOddsEvents(sport);
   if(oe.error) return { error:`Oran API hatası (${oe.error}).` };
@@ -444,6 +454,7 @@ async function fetchBasket(sport){
       return { code:m, name:MKN[m], family:"1x2", model:p!=null? +(p*100).toFixed(1) : null, mkt:p!=null? +(p*100).toFixed(1) : null, edge:0, odds:odd,
         odds_pin:(pin.raw||{})[m]||null, odds_pin_fair:pf? +pf.toFixed(3) : null, pin_edge:pe, book:(cons.book||{})[m]||null, value }; });
     const pin_ready=markets.every((x)=>x.model!=null); // Pinnacle genelde mac gunune yakin acilir; o zamana kadar secim yok
+    for(const key of ["totals","spreads"]){ const b=bestLine(ev,key,(BASKET_SIGMA[sport]||{})[key]); if(b) markets.push(b); }
     const best=markets.filter((x)=>x.value).sort((a,b)=>b.pin_edge-a.pin_edge)[0]||null;
     if(best){ const p=best.model/100; best.kelly_pct=+Math.min(KELLY_CAP_PCT, KELLY_FRACTION*Math.max(0,(p*best.odds-1)/(best.odds-1))*100).toFixed(1); }
     out.push({ home:ev.home_team, away:ev.away_team, commence:ev.commence_time, source:"price", bk:true, pin_ready, model_lh:null, model_la:null, markets, pick:best, books_used:cons.books });
@@ -554,7 +565,8 @@ async function settle(){ try{
       if(!sc){ if(ageDays(r.match_date)>10){ updates.push({id:r.id, result:"void"}); voided++; } continue; }
       if(sp===WORLD_CUP_SPORT) wcSettled[norm(sc.home)+"|"+norm(sc.away)]=sc;
       const dnbPush=String(r.market).startsWith("DNB")&&sc.hs===sc.as; // beraberlikte iade: para geri -> void
-      updates.push({id:r.id, actual_score:sc.hs+"-"+sc.as, result: dnbPush? "void" : (evalMkt(r.market,sc.hs,sc.as)?"hit":"miss")}); } }
+      const lr=lineResult(r.market,sc.hs,sc.as); // basketbol alt/ust + handikap
+      updates.push({id:r.id, actual_score:sc.hs+"-"+sc.as, result: lr || (dnbPush? "void" : (evalMkt(r.market,sc.hs,sc.as)?"hit":"miss"))}); } }
   if(updates.length){ const {data,error:e2}=await sb().rpc("bahis_set_results",{p:updates}); if(e2) return {error:e2.message};
     const eloUpd=await applyEloUpdates(wcSettled);
     return {settled:data, voided, elo_updated:eloUpd}; }
@@ -620,6 +632,12 @@ async function captureClosing(){
       for(const r of pend){
         const k=findPair(r.home,r.away,evByKey); const ev=k? evByKey[k] : null;
         if(!ev) continue;
+        const pl=parseLine(r.market);
+        if(pl&&isBasket(sp)){ const [key,side,L]=pl, {pin,q}=lineQuotes(ev,key,EXCHANGE_KEYS), s=(BASKET_SIGMA[sp]||{})[key];
+          const same=q.filter((x)=>x[0]===side&&x[1]===L).map((x)=>x[2]); let cpin=null;
+          if(pin&&s){ const [w,pu]=sideWP(side,L,fitMu(pin.L,pin.p,s),s); if(w>0) cpin=+((1-pu)/w).toFixed(3); }
+          if(same.length||cpin) updates.push({ id:r.id, closing_odds:same.length? Math.max(...same) : null, closing_pin:cpin });
+          continue; }
         const cons=buildConsensus(ev);
         let closing=null;
         if(r.market==="1"||r.market==="X"||r.market==="2"||r.market==="O"||r.market==="U") closing=cons.odds[r.market]||null;
