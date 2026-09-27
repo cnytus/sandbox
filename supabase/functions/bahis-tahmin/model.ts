@@ -52,15 +52,19 @@ export function evalMkt(code,hs,as){ const tot=hs+as; switch(code){ case"1":retu
 // ---- Yuksek isabetli ek secimler (2026-09-27) ----
 // Cifte sans / beraberlikte iade 1X2 fiyatlarindan birebir kurulur (dutching): DC = 1/(1/o1+1/oX), DNB1 = o1*(oX-1)/oX.
 // Backtest (6 lig x 4 sezon, Max oran vs Pinnacle adil, esik %2): DC oran <=1,8 -> 136 bahis %81 isabet ROI ~+15; >1,8 negatif.
-// DNB oran <=2,2 -> 161 bahis ROI ~+11. Ust 1,5 / Alt 3,5 icin CSV'de oran yok (fiyat backtest'i yok); referans Pinnacle alternate_totals.
+// DNB oran <=2,2 -> 161 bahis ROI ~+11. Ust 1,5 / Alt 3,5 (canli referans Pinnacle alternate_totals): Footiqo 1xBet kapanis
+// oranlari + Pinnacle kapanis 1X2/U2,5'ten Poisson adil olasilik, 6 lig 2019-2026 (~13.8k mac): oran <=1,8, fiyat-edge %2-5 ->
+// Ust 1,5: 75 bahis %76 isabet ROI +11,8 | Alt 3,5: 492 bahis %66 isabet ROI +3,9 (iki donemde de pozitif). Edge %5 ustu
+// cogunlukla model hatasi (esik 4-6%'da ROI duser) -> OU icin ust sinir %5. KG: Poisson KG'yi 2 puan dusuk tahmin ediyor -> eklenmedi.
 export const XMAX={ DC:1.8, DNB:2.2, OU:1.8 };
+export const XMAXE={ DC:10, DNB:10, OU:5 }; // pazar bazli fiyat-edge ust siniri (%)
 export const dutchPrice=(a,b)=>1/(1/a+1/b);
 export const dnbPrice=(o,ox)=>o*(ox-1)/ox;
 // o={best:{1,X,2}, book:{1,X,2}, fp:{1,X,2} Pinnacle adil olasilik (yoksa null), kp/mp: model/piyasa olasiligi,
 //    ou:{O15:{price,book,fp,kp},U35:{...}}, thr: esik %, maxEdge: ust sinir %}. En yuksek fiyat-edge'li aday ya da null.
 export function extraPick(o){
   const c=[]; const b=o.best||{}, bk=o.book||{}, fp=o.fp, kp=o.kp||{}, mp=o.mp||{};
-  const add=(x)=>{ if(x.price>1&&x.price<=x.max&&x.pe>=o.thr&&x.pe<=o.maxEdge&&x.agree) c.push(x); };
+  const add=(x)=>{ if(x.price>1&&x.price<=x.max&&x.pe>=o.thr&&x.pe<=Math.min(o.maxEdge,x.emax??1e9)&&x.agree) c.push(x); };
   if(fp){
     for(const [x,y,code] of [["1","X","DC1X"],["X","2","DCX2"],["1","2","DC12"]]){ if(!(b[x]>1&&b[y]>1)) continue;
       const price=dutchPrice(b[x],b[y]), pf=fp[x]+fp[y], sx=(1/b[x])/(1/b[x]+1/b[y]);
@@ -72,6 +76,6 @@ export function extraPick(o){
         legs:[{code:j,odds:b[j],book:bk[j]||null,share:1-sx},{code:"X",odds:b["X"],book:bk["X"]||null,share:sx}]}); }
   }
   for(const code of ["O15","U35"]){ const u=(o.ou||{})[code]; if(!u||!(u.price>1)||!(u.fp>0)) continue;
-    add({code,price:u.price,prob:u.fp,pe:(u.price*u.fp-1)*100,max:XMAX.OU,agree:u.kp>=u.fp-1e-9,legs:[{code,odds:u.price,book:u.book||null,share:1}]}); }
+    add({code,price:u.price,prob:u.fp,pe:(u.price*u.fp-1)*100,max:XMAX.OU,emax:XMAXE.OU,agree:u.kp>=u.fp-1e-9,legs:[{code,odds:u.price,book:u.book||null,share:1}]}); }
   return c.sort((a,z)=>z.pe-a.pe)[0]||null;
 }
