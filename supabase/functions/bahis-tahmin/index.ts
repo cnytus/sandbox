@@ -24,7 +24,7 @@ const FOOTBALL_API_KEY=Deno.env.get("FOOTBALL_API_KEY")||""; // API-Football (ap
 const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"";
 // Yazan / pahali action'lar (settle, calibrate, backtest, ...) bu header'i ister. pg_cron komutlari da gonderir.
 const ADMIN_KEY=Deno.env.get("BAHIS_ADMIN_KEY")||"";
-const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe"]);
+const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe","fd_csv"]);
 // FOOTBALL_DATA_KEY zorunlu degil (CSV birincil form kaynagi; FD yalniz yedek + Dunya Kupasi formu)
 const MISSING_ENV=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","ODDS_API_KEY"].filter((k)=>!Deno.env.get(k));
 // Tani: hangi secret'lar tanimli (degerler asla donmez)
@@ -965,6 +965,12 @@ Deno.serve(async (req)=>{
         for(const b of (d.bookmakers||[])) for(const m of (b.markets||[])){ const c=cov[m.key]||(cov[m.key]={books:[],lines:{}}); c.books.push(b.key); for(const o of (m.outcomes||[])){ const L=(o.name||"")+(o.point!=null?" "+o.point:""); c.lines[L]=(c.lines[L]||0)+1; } }
         return J({ status:r.status, event:ev.home_team+" - "+ev.away_team, commence:ev.commence_time, credits_last:r.headers.get("x-requests-last"), credits_remaining:r.headers.get("x-requests-remaining"), coverage:cov });
       }catch(e){ return J({fetch_error:String(e)}); }
+    }
+    if(body.action==="fd_csv"){ // football-data.co.uk CSV aktarimi (yerel backtest icin; gelistirici agi bu siteye erisemiyor)
+      const c=String(body.code||""), se=String(body.season||"");
+      if(!/^[A-Z0-9]{1,4}$/.test(c)||!/^\d{4}$/.test(se)) return J({error:"code/season"},400);
+      const r=await fetch(`https://www.football-data.co.uk/mmz4281/${se}/${c}.csv`);
+      return new Response(await r.text(),{status:r.status,headers:{...CORS,"Content-Type":"text/csv; charset=utf-8"}});
     }
     if(body.action==="fd_debug"){ // football-data.org anahtar/plan tanisi (anahtar donmez)
       if(!FD_KEY) return J({key:false});

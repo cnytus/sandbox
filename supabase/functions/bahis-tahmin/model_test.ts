@@ -89,4 +89,6 @@ Deno.test("extraPick: esik, oran siniri, model uyumu", () => {
   const o = extraPick({ thr: 2, maxEdge: 10, ou: { O15: { price: 1.30, book: "Z", fp: 0.80, kp: 0.82 } } });
   assertEquals(o.code, "O15");
   assertEquals(extraPick({ thr: 2, maxEdge: 10, ou: { O15: { price: 1.9, book: "Z", fp: 0.56, kp: 0.6 } } }), null);
+  // Ust/Alt icin edge ust siniri %5 (Footiqo backtest'i): 1.35 x 0.80 = +8% -> reddedilir
+  assertEquals(extraPick({ thr: 2, maxEdge: 10, ou: { O15: { price: 1.35, book: "Z", fp: 0.80, kp: 0.82 } } }), null);
 });
