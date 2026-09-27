@@ -729,7 +729,7 @@ async function backtest(body){
         ...(()=>{ const C1=grp(c.cl1,L), CO=grp(c.clOU,L), P1=grp(c.pre1,L), PO=grp(c.preOU,L);
           const t1=["pin","bfe"][P1.k]||"yok", t2=["pin","pin_acilis","bfe","bfe_acilis"][C1.k]||"yok";
           refN.mac_oncesi[t1]=(refN.mac_oncesi[t1]||0)+1; refN.kapanis[t2]=(refN.kapanis[t2]||0)+1;
-          return { ch:C1.v[0], cd:C1.v[1], ca:C1.v[2], co:CO.v[0], cu:CO.v[1], ph:P1.v[0], pd:P1.v[1], pa:P1.v[2], po2:PO.v[0], pu2:PO.v[1] }; })() });
+          return { ref1:t1, ch:C1.v[0], cd:C1.v[1], ca:C1.v[2], co:CO.v[0], cu:CO.v[1], ph:P1.v[0], pd:P1.v[1], pa:P1.v[2], po2:PO.v[0], pu2:PO.v[1] }; })() });
     }
   }catch(e){ warn(`backtest csv ${code}/${s}`,e); }}
   raw.sort((x,y)=>x.t-y.t);
@@ -763,6 +763,8 @@ async function backtest(body){
     pr[B]++; if(won) pr[H]++; pr[F]+= won? odds-1 : -1; if(pc&&pc>1){ pr[N]++; const c=odds/pc-1; pr[S]+=c; if(c>0) pr[P]++; }
     if(!isOU){ const bn=ODDS_BINS.find((x)=>odds<=x[0])[1]; const b=pr.bins[bn]||(pr.bins[bn]={bets:0,hits:0,flat:0,clvN:0,clvSum:0}); b.bets++; if(won) b.hits++; b.flat+= won? odds-1 : -1; if(pc&&pc>1){ b.clvN++; b.clvSum+=odds/pc-1; } } };
   const R=[]; // raw walk-forward (model,market,outcome) rows for fit_blend stacking
+  // Tani (2026-09-27): 1X2 fiyat-edge bahisleri referans kaynagina gore (pin / bfe) + body.debug_bets ile bahis listesi
+  const byRef={}; const betList=[];
   // 2026-09-27 ek pazarlar. Cifte sans ve beraberlikte iade (DNB) 1X2 fiyatlarindan BIREBIR kurulabilir (dutching):
   // DC 1X fiyati = 1/(1/o1+1/oX); DNB ev fiyati = o1*(oX-1)/oX. Boylece CSV'deki Max/Pinnacle oranlariyla gercek backtest yapilir.
   // Ust 1,5 ve KG icin CSV'de oran yok -> yalniz kalibrasyon (tahmin edilen olasilik vs gerceklesen).
@@ -811,7 +813,10 @@ async function backtest(body){
       const maxs=[r.xh,r.xd,r.xa], ks=[k1-mH,kX-mD,k2-mA], pcs=[r.ch,r.cd,r.ca];
       for(let j=0;j<3;j++){ if(!pins[j]||pins[j]<=1||!maxs[j]||maxs[j]<=1) continue; const pe=maxs[j]/pins[j]-1;
         if(pe*100>=cfg.pinMin && pe*100<=cfg.pinMax && ks[j]>=0 && (!(cfg.maxOdds>0)||maxs[j]<=cfg.maxOdds) && (!bestP||pe>bestP.pe)) bestP={pe,j}; }
-      if(bestP){ prBet(o===bestP.j, maxs[bestP.j], pcs[bestP.j], false); }
+      if(bestP){ prBet(o===bestP.j, maxs[bestP.j], pcs[bestP.j], false);
+        const won=o===bestP.j, od=maxs[bestP.j], rb=byRef[r.ref1]||(byRef[r.ref1]={bets:0,hits:0,flat:0,clvN:0,clvSum:0}); rb.bets++; if(won) rb.hits++; rb.flat+= won? od-1 : -1;
+        const pc=pcs[bestP.j]; if(pc&&pc>1){ rb.clvN++; rb.clvSum+=od/pc-1; }
+        if(body.debug_bets) betList.push({ d:new Date(r.t).toISOString().slice(0,10), h:r.h, a:r.a, pick:["1","X","2"][bestP.j], odds:od, fair:+pins[bestP.j].toFixed(3), edge:+(bestP.pe*100).toFixed(2), close:pc||null, score:r.gh+"-"+r.ga, won, ref:r.ref1 }); }
       // ---- Cifte sans (1X, X2, 12) ve DNB: referans Pinnacle adil, fiyat = Max oranlarla dutching, tek bahis/mac ----
       if(pins[0]&&r.xh>1&&r.xd>1&&r.xa>1){
         const fp=[1/pins[0],1/pins[1],1/pins[2]]; const kk=[k1,kX,k2], mm=[mH,mD,mA];
@@ -863,6 +868,8 @@ async function backtest(body){
     draw:{bets:xBets, hits:xHits, flat_roi:xBets? +(100*xFlat/xBets).toFixed(1):null},
     cols:{ ...cols, referans:refN },
     price_rule: { pin_min_pct:cfg.pinMin, pin_max_pct:cfg.pinMax, max_odds:cfg.maxOdds||null,
+      x12_by_ref: Object.fromEntries(Object.entries(byRef).map(([k,b])=>[k,{ bets:b.bets, hit_rate:+(b.hits/b.bets).toFixed(3), flat_roi_pct:+(100*b.flat/b.bets).toFixed(1), clv_close_avg_pct:b.clvN? +(100*b.clvSum/b.clvN).toFixed(2):null }])),
+      bets_list: body.debug_bets? betList : undefined,
       x12_by_odds: Object.fromEntries(ODDS_BINS.map((x)=>x[1]).filter((k)=>pr.bins[k]).map((k)=>{ const b=pr.bins[k]; return [k,{ bets:b.bets, hit_rate:+(b.hits/b.bets).toFixed(3), flat_roi_pct:+(100*b.flat/b.bets).toFixed(1), clv_close_avg_pct:b.clvN? +(100*b.clvSum/b.clvN).toFixed(2):null }]; })),
       x12:{ bets:pr.bets, hit_rate:pr.bets? +(pr.hits/pr.bets).toFixed(3):null, flat_roi_pct:pr.bets? +(100*pr.flat/pr.bets).toFixed(1):null, clv_close_n:pr.clvN, clv_close_avg_pct:pr.clvN? +(100*pr.clvSum/pr.clvN).toFixed(2):null, clv_pos_rate:pr.clvN? +(pr.clvPos/pr.clvN).toFixed(3):null },
       ou:{ bets:pr.ouBets, hit_rate:pr.ouBets? +(pr.ouHits/pr.ouBets).toFixed(3):null, flat_roi_pct:pr.ouBets? +(100*pr.ouFlat/pr.ouBets).toFixed(1):null, clv_close_n:pr.ouClvN, clv_close_avg_pct:pr.ouClvN? +(100*pr.ouClvSum/pr.ouClvN).toFixed(2):null, clv_pos_rate:pr.ouClvN? +(pr.ouClvPos/pr.ouClvN).toFixed(3):null } },
