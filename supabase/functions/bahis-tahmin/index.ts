@@ -690,11 +690,11 @@ async function calibrate(){
 // ---------- v10: walk-forward backtest over football-data.co.uk archives ----------
 async function backtest(body){
   const sport=body.sport||"soccer_epl"; const code=CSV_COMP[sport]; if(!code) return {error:"csv kodu yok"};
-  const seasons=(Array.isArray(body.seasons)? body.seasons : ["2223","2324","2425","2526"]).filter((s)=>/^\d{4}$/.test(String(s))).slice(0,8);
+  const seasons=(Array.isArray(body.seasons)? body.seasons : ["2223","2324","2425","2526","2627"]).filter((s)=>/^\d{4}$/.test(String(s))).slice(0,8);
   if(!seasons.length) return {error:"seasons: 'YYYY' bicimi (orn. 2425), en fazla 8"};
   const cfgIn={}; for(const k of ["sotW","formW","hl","thr","x12s","rho","ouShrink","pinMin","pinMax","maxOdds"]){ const v=+(body.cfg||{})[k]; if(isFinite(v)) cfgIn[k]=v; }
   const cfg={ sotW:SOT_W, formW:FORM_TOTAL_W, hl:45, thr:9.86, x12s:X12_PROB_SHRINK, rho:-0.12, ouShrink:GOAL_PROB_SHRINK, pinMin:PIN_EDGE_MIN_PCT, pinMax:PIN_EDGE_MAX_PCT, maxOdds:PIN_MAX_ODDS, ...cfgIn }; // maxOdds 0 = sinirsiz
-  const raw=[]; const cols={ pinnacle_closing:false, pinnacle_ou_closing:false, max_ou:false };
+  const raw=[]; const cols={ pinnacle_closing:false, pinnacle_ou_closing:false, max_ou:false }; const refN={ mac_oncesi:{}, kapanis:{} };
   for(const s of seasons){ try{
     const r=await fetch(`https://www.football-data.co.uk/mmz4281/${s}/${code}.csv`); if(!r.ok) continue;
     const lines=(await r.text()).replace(/^\uFEFF/,"").split(/\r?\n/);
@@ -706,13 +706,17 @@ async function backtest(body){
       mh:pick2("MaxH","B365H"), md:pick2("MaxD","B365D"), ma:pick2("MaxA","B365A"),
       po:pick2("Avg>2.5","B365>2.5"), pu:pick2("Avg<2.5","B365<2.5"),
       xo:pick2("Max>2.5","B365>2.5"), xu:pick2("Max<2.5","B365<2.5"),
-      ch:pick2("PSCH","PSH"), cd:pick2("PSCD","PSD"), ca:pick2("PSCA","PSA"),
-      co:pick2("PC>2.5","P>2.5"), cu:pick2("PC<2.5","P<2.5"),
-      // Pinnacle ACILIS/mac-oncesi fiyati (fiyat-edge kurali icin referans): PSH/PSD/PSA, P>2.5/P<2.5
-      ph:ix("PSH"), pd:ix("PSD"), pa:ix("PSA"), po2:ix("P>2.5"), pu2:ix("P<2.5") };
+      // Referans gruplari (sira = oncelik), SATIR bazinda secilir: football-data Pinnacle sutunlarini 2025/26 ortasinda birakti
+      // (sutun var ama bos), 2026/27'de hic yok -> Betfair borsa (BFE) yedegi. Pinnacle'li satirlarda davranis ayni.
+      cl1:[["PSCH","PSCD","PSCA"],["PSH","PSD","PSA"],["BFECH","BFECD","BFECA"],["BFEH","BFED","BFEA"]].map((g)=>g.map(ix)),
+      clOU:[["PC>2.5","PC<2.5"],["P>2.5","P<2.5"],["BFEC>2.5","BFEC<2.5"],["BFE>2.5","BFE<2.5"]].map((g)=>g.map(ix)),
+      pre1:[["PSH","PSD","PSA"],["BFEH","BFED","BFEA"]].map((g)=>g.map(ix)),
+      preOU:[["P>2.5","P<2.5"],["BFE>2.5","BFE<2.5"]].map((g)=>g.map(ix)),
+    };
     if(ix("PSCH")>=0) cols.pinnacle_closing=true; if(ix("PC>2.5")>=0) cols.pinnacle_ou_closing=true; if(ix("Max>2.5")>=0) cols.max_ou=true;
     if(c.d<0||c.h<0||c.gh<0) continue;
     const num=(i,L)=> (i>=0 && L[i]!==""&&L[i]!=null)? (+L[i]||null) : null;
+    const grp=(gs,L)=>{ for(let k=0;k<gs.length;k++){ const v=gs[k].map((i)=>num(i,L)); if(v.every((x)=>x)) return {v,k}; } return {v:gs[0].map(()=>null),k:-1}; };
     for(let i=1;i<lines.length;i++){ const L=lines[i].split(","); if(L.length<6) continue;
       const dm=(L[c.d]||"").split("/"); if(dm.length!==3) continue; let yy=+dm[2]; if(yy<100)yy+=2000;
       const t=Date.UTC(yy,+dm[1]-1,+dm[0],15);
@@ -722,8 +726,10 @@ async function backtest(body){
         oh:num(c.ah,L), od:num(c.ad,L), oa:num(c.aa,L),
         xh:num(c.mh,L), xd:num(c.md,L), xa:num(c.ma,L),
         po:num(c.po,L), pu:num(c.pu,L), xo:num(c.xo,L), xu:num(c.xu,L),
-        ch:num(c.ch,L), cd:num(c.cd,L), ca:num(c.ca,L), co:num(c.co,L), cu:num(c.cu,L),
-        ph:num(c.ph,L), pd:num(c.pd,L), pa:num(c.pa,L), po2:num(c.po2,L), pu2:num(c.pu2,L) });
+        ...(()=>{ const C1=grp(c.cl1,L), CO=grp(c.clOU,L), P1=grp(c.pre1,L), PO=grp(c.preOU,L);
+          const t1=["pin","bfe"][P1.k]||"yok", t2=["pin","pin_acilis","bfe","bfe_acilis"][C1.k]||"yok";
+          refN.mac_oncesi[t1]=(refN.mac_oncesi[t1]||0)+1; refN.kapanis[t2]=(refN.kapanis[t2]||0)+1;
+          return { ch:C1.v[0], cd:C1.v[1], ca:C1.v[2], co:CO.v[0], cu:CO.v[1], ph:P1.v[0], pd:P1.v[1], pa:P1.v[2], po2:PO.v[0], pu2:PO.v[1] }; })() });
     }
   }catch(e){ warn(`backtest csv ${code}/${s}`,e); }}
   raw.sort((x,y)=>x.t-y.t);
@@ -855,7 +861,7 @@ async function backtest(body){
     brier_model:+(brK/nn).toFixed(4), brier_market:+(brM/nn).toFixed(4),
     rps_model:+(rpsK/nn).toFixed(4), rps_market:+(rpsM/nn).toFixed(4),
     draw:{bets:xBets, hits:xHits, flat_roi:xBets? +(100*xFlat/xBets).toFixed(1):null},
-    cols,
+    cols:{ ...cols, referans:refN },
     price_rule: { pin_min_pct:cfg.pinMin, pin_max_pct:cfg.pinMax, max_odds:cfg.maxOdds||null,
       x12_by_odds: Object.fromEntries(ODDS_BINS.map((x)=>x[1]).filter((k)=>pr.bins[k]).map((k)=>{ const b=pr.bins[k]; return [k,{ bets:b.bets, hit_rate:+(b.hits/b.bets).toFixed(3), flat_roi_pct:+(100*b.flat/b.bets).toFixed(1), clv_close_avg_pct:b.clvN? +(100*b.clvSum/b.clvN).toFixed(2):null }]; })),
       x12:{ bets:pr.bets, hit_rate:pr.bets? +(pr.hits/pr.bets).toFixed(3):null, flat_roi_pct:pr.bets? +(100*pr.flat/pr.bets).toFixed(1):null, clv_close_n:pr.clvN, clv_close_avg_pct:pr.clvN? +(100*pr.clvSum/pr.clvN).toFixed(2):null, clv_pos_rate:pr.clvN? +(pr.clvPos/pr.clvN).toFixed(3):null },
