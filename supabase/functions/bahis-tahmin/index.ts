@@ -15,7 +15,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.7";
+const VERSION="10.8";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -24,7 +24,7 @@ const FOOTBALL_API_KEY=Deno.env.get("FOOTBALL_API_KEY")||""; // API-Football (ap
 const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"";
 // Yazan / pahali action'lar (settle, calibrate, backtest, ...) bu header'i ister. pg_cron komutlari da gonderir.
 const ADMIN_KEY=Deno.env.get("BAHIS_ADMIN_KEY")||"";
-const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe","fd_csv"]);
+const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe","fd_csv","odds_hist"]);
 // FOOTBALL_DATA_KEY zorunlu degil (CSV birincil form kaynagi; FD yalniz yedek + Dunya Kupasi formu)
 const MISSING_ENV=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","ODDS_API_KEY"].filter((k)=>!Deno.env.get(k));
 // Tani: hangi secret'lar tanimli (degerler asla donmez)
@@ -97,7 +97,12 @@ const INJ_CLAMP=0.12;     // toplam sakatlik duzeltmesi siniri
 const INJ_CACHE_TTL_S=21600; // 6 saat DB cache (100 istek/gun kotasini korur)
 const API_FOOTBALL_LEAGUE={ soccer_epl:39, soccer_spain_la_liga:140, soccer_italy_serie_a:135, soccer_germany_bundesliga:78, soccer_france_ligue_one:61, soccer_turkey_super_league:203, soccer_uefa_champs_league:2, soccer_fifa_world_cup:1 };
 // autosave'in dolastigi ligler: CSV'li olanlar + yalniz football-data.org'lu olanlar (CL)
-const AUTOSAVE_SPORTS=[...new Set([...Object.keys(CSV_COMP), ...Object.keys(COMP)])];
+// Basketbol (Faz 1, 2026-09-27): yalniz Mac Sonucu (2 yonlu, uzatma dahil), model yok; secim = fiyat-edge (en iyi fiyat / Pinnacle adil).
+// Esik %2 sabit: Euroleague 25/26 backtest'i (tools/basket_backtest.py) %2'de 38 bahis, kapanis adiline karsi CLV +%2,3 (±0,95).
+// Futbol kalibrasyonu (calibrate) basketbol satirlarini kullanmaz; esigi etkilemez.
+const BASKET_SPORTS=["basketball_nba","basketball_euroleague"]; const BASKET_PE_MIN=2;
+const isBasket=(sp)=>String(sp||"").startsWith("basketball_");
+const AUTOSAVE_SPORTS=[...new Set([...Object.keys(CSV_COMP), ...Object.keys(COMP), ...BASKET_SPORTS])];
 const WC_HOSTS=new Set(["usa","unitedstates","canada","mexico"]);
 function wcHomeBonus(home,away,bonus){
   const h=WC_HOSTS.has(norm(home)), a=WC_HOSTS.has(norm(away));
@@ -393,7 +398,7 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_
 
 async function fetchOddsEvents(sport){
   try{ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:sport,max_age_seconds:ODDS_CACHE_TTL_S}); if(data) return { events:data, cached:true }; }catch(e){ warn("odds cache read",e); }
-  const res=await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=h2h,totals&oddsFormat=decimal`);
+  const res=await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=${isBasket(sport)?"h2h":"h2h,totals"}&oddsFormat=decimal`);
   if(!res.ok){ warn(`odds API ${sport} HTTP`,res.status); return { error:res.status }; }
   const events=await res.json();
   try{ await sb().rpc("bahis_set_odds_cache",{sp:sport,p:events}); }catch(e){ warn("odds cache write",e); }
@@ -426,7 +431,28 @@ function altOU(entry){
   return out;
 }
 
+async function fetchBasket(sport){
+  const oe=await fetchOddsEvents(sport);
+  if(oe.error) return { error:`Oran API hatası (${oe.error}).` };
+  const out=[];
+  for(const ev of oe.events){
+    if(ev.commence_time && new Date(ev.commence_time).getTime()<=Date.now()){ out.push({ home:ev.home_team, away:ev.away_team, commence:ev.commence_time, live:true, markets:[], pick:null, source:"live", bk:true }); continue; }
+    const cons=buildConsensus(ev), pin=pinnacleFair(ev);
+    const markets=["1","2"].map((m)=>{ const odd=cons.odds[m]||null, pf=(pin.fair||{})[m]||null, p=(pf&&pf>1)? 1/pf : null;
+      const pe=(odd&&p)? +((odd/pf-1)*100).toFixed(2) : null;
+      const value=pe!=null && pe>=BASKET_PE_MIN && pe<=PIN_EDGE_MAX_PCT && odd<=PIN_MAX_ODDS;
+      return { code:m, name:MKN[m], family:"1x2", model:p!=null? +(p*100).toFixed(1) : null, mkt:p!=null? +(p*100).toFixed(1) : null, edge:0, odds:odd,
+        odds_pin:(pin.raw||{})[m]||null, odds_pin_fair:pf? +pf.toFixed(3) : null, pin_edge:pe, book:(cons.book||{})[m]||null, value }; });
+    const pin_ready=markets.every((x)=>x.model!=null); // Pinnacle genelde mac gunune yakin acilir; o zamana kadar secim yok
+    const best=markets.filter((x)=>x.value).sort((a,b)=>b.pin_edge-a.pin_edge)[0]||null;
+    if(best){ const p=best.model/100; best.kelly_pct=+Math.min(KELLY_CAP_PCT, KELLY_FRACTION*Math.max(0,(p*best.odds-1)/(best.odds-1))*100).toFixed(1); }
+    out.push({ home:ev.home_team, away:ev.away_team, commence:ev.commence_time, source:"price", bk:true, pin_ready, model_lh:null, model_la:null, markets, pick:best, books_used:cons.books });
+  }
+  return { matches:out, count:out.length, rule:"price_edge", edge_threshold_pct:BASKET_PE_MIN, basketball:true };
+}
+
 async function fetchFixtures(sport){
+  if(isBasket(sport)) return fetchBasket(sport);
   const params=await getParams();
   const lpAll=await getLeagueParams();
   const lp=lpAll[sport];
@@ -613,7 +639,7 @@ async function calibrate(){
   try{
     const {data:rows0,error}=await sb().rpc("bahis_settled_for_calibration",{lim:3000});
     if(error) return {error:error.message};
-    const rows=(rows0||[]).filter((r)=>r.result!=="void");
+    const rows=(rows0||[]).filter((r)=>r.result!=="void"&&!isBasket(r.sport));
     const n=rows.length;
     const paramsBefore=await getParams();
     if(n<30) return { skipped:true, sample_size:n, reason:"need >=30 settled predictions to calibrate safely", params:paramsBefore };
@@ -978,6 +1004,15 @@ Deno.serve(async (req)=>{
         for(const b of (d.bookmakers||[])) for(const m of (b.markets||[])){ const c=cov[m.key]||(cov[m.key]={books:[],lines:{}}); c.books.push(b.key); for(const o of (m.outcomes||[])){ const L=(o.name||"")+(o.point!=null?" "+o.point:""); c.lines[L]=(c.lines[L]||0)+1; } }
         return J({ status:r.status, event:ev.home_team+" - "+ev.away_team, commence:ev.commence_time, credits_last:r.headers.get("x-requests-last"), credits_remaining:r.headers.get("x-requests-remaining"), coverage:cov });
       }catch(e){ return J({fetch_error:String(e)}); }
+    }
+    if(body.action==="odds_hist"){ // The Odds API gecmis oran vekili (yerel backtest icin; anahtar sunucuda kalir). path: odds|events|usage
+      const path=String(body.path||"odds"), sp=String(body.sport||""), dt=String(body.date||""), mk=String(body.markets||"h2h");
+      const hdr=(r)=>({ credits_last:r.headers.get("x-requests-last"), credits_used:r.headers.get("x-requests-used"), credits_remaining:r.headers.get("x-requests-remaining") });
+      if(path==="usage"){ const r=await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${ODDS_KEY}`); return J({ status:r.status, ...hdr(r) }); } // /sports kredi harcamaz
+      if(!/^(basketball|soccer)_[a-z0-9_]+$/.test(sp)||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(dt)||!/^(h2h|totals|spreads)(,(h2h|totals|spreads))*$/.test(mk)||!["odds","events"].includes(path)) return J({error:"path/sport/date/markets"},400);
+      const q= path==="odds"? `&regions=eu&markets=${mk}&oddsFormat=decimal` : "";
+      const r=await fetch(`https://api.the-odds-api.com/v4/historical/sports/${sp}/${path}?apiKey=${ODDS_KEY}&date=${dt}${q}`);
+      return J({ status:r.status, ...hdr(r), body: r.ok? await r.json() : await r.text() });
     }
     if(body.action==="fd_csv"){ // football-data.co.uk CSV aktarimi (yerel backtest icin; gelistirici agi bu siteye erisemiyor)
       const c=String(body.code||""), se=String(body.season||"");
