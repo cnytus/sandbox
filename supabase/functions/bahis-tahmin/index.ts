@@ -10,12 +10,12 @@
 //      P4 CLV-driven calibration; P5 team home advantage; P6 draw breakdown; P7 exposure cap.
 // v9.x) CSV source (T1 + SoT blend); DC ratings; rest; steam. v8.x/v7 in git history.
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick, fitMu, sideWP, lineResult, lineQuotes, parseLine, bestLineRaw } from "./model.ts";
+import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick, fitMu, sideWP, lineResult, lineQuotes, parseLine, bestLineRaw, basketElo, eloPredict } from "./model.ts";
 
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.12";
+const VERSION="10.13";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -24,7 +24,7 @@ const FOOTBALL_API_KEY=Deno.env.get("FOOTBALL_API_KEY")||""; // API-Football (ap
 const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"";
 // Yazan / pahali action'lar (settle, calibrate, backtest, ...) bu header'i ister. pg_cron komutlari da gonderir.
 const ADMIN_KEY=Deno.env.get("BAHIS_ADMIN_KEY")||"";
-const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe","fd_csv","odds_hist","tg_test"]);
+const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe","fd_csv","odds_hist","tg_test","collect_results"]);
 // FOOTBALL_DATA_KEY zorunlu degil (CSV birincil form kaynagi; FD yalniz yedek + Dunya Kupasi formu)
 const MISSING_ENV=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","ODDS_API_KEY"].filter((k)=>!Deno.env.get(k));
 // Tani: hangi secret'lar tanimli (degerler asla donmez)
@@ -471,9 +471,26 @@ function bestLine(ev,key,s){ const best=bestLineRaw(ev,key,s,BASKET_LINE_WIN,EXC
   return { code:best.code, name:best.code, family:key==="totals"?"ou":"hcp", model:+(best.w*100).toFixed(1), mkt:+(best.w*100).toFixed(1), edge:0, odds:best.price,
     odds_pin:null, odds_pin_fair:+((1-best.pu)/best.w).toFixed(3), pin_edge:pe, book:best.book, value: pe>=BASKET_PE_MIN && pe<=PIN_EDGE_MAX_PCT && best.price<=PIN_MAX_ODDS }; }
 
+// Basketbol sonuc arsivi (2026-09-28): scores (daysFrom=3, lig basina 2 kredi) gunde bir (autosave) -> bahis_tahmin.game_results.
+// Elo modeli (bilgi amacli, secimlere karismaz) bu arsivden hesaplanir. Ev avantaji Elo cinsinden.
+const BASKET_HCA={ basketball_nba:60, basketball_euroleague:90 };
+async function collectResults(){ const out={};
+  for(const sp of BASKET_SPORTS){ try{
+    const r=await fetch(`https://api.the-odds-api.com/v4/sports/${sp}/scores/?daysFrom=3&apiKey=${ODDS_KEY}`); if(!r.ok){ out[sp]=`HTTP ${r.status}`; continue; }
+    const rows=[]; for(const g of ((await r.json())||[])){ if(!g.completed||!g.scores) continue;
+      const hs=Number(g.scores.find((s)=>s.name===g.home_team)?.score), as=Number(g.scores.find((s)=>s.name===g.away_team)?.score); if(isNaN(hs)||isNaN(as)) continue;
+      rows.push({ sport:sp, event_id:g.id, commence_time:g.commence_time, home:g.home_team, away:g.away_team, home_score:hs, away_score:as }); }
+    if(rows.length){ const {data,error}=await sb().rpc("bahis_upsert_results",{p:rows}); if(error) throw error; out[sp]=data; } else out[sp]=0;
+  }catch(e){ warn(`collectResults ${sp}`,e); out[sp]=String(e); } }
+  return out; }
+async function basketModel(sport){ try{ const {data,error}=await sb().rpc("bahis_get_results",{sp:sport}); if(error) throw error;
+    const games=(data||[]).map((g)=>({ t:new Date(g.commence_time).getTime(), home:g.home, away:g.away, hs:g.home_score, as:g.away_score }));
+    return { m:basketElo(games,BASKET_HCA[sport]??60), n:games.length }; }catch(e){ warn("basketModel",e); return null; } }
+
 async function fetchBasket(sport,pub=false){
   const oe=await fetchOddsEvents(sport,pub);
   if(oe.error) return { error:`Oran API hatası (${oe.error}).` };
+  const bm=await basketModel(sport), hca=BASKET_HCA[sport]??60;
   const out=[];
   for(const ev of oe.events){
     if(ev.commence_time && new Date(ev.commence_time).getTime()<=Date.now()){ out.push({ home:ev.home_team, away:ev.away_team, commence:ev.commence_time, live:true, markets:[], pick:null, source:"live", bk:true }); continue; }
@@ -487,7 +504,7 @@ async function fetchBasket(sport,pub=false){
     for(const key of ["totals","spreads"]){ const b=bestLine(ev,key,(BASKET_SIGMA[sport]||{})[key]); if(b) markets.push(b); }
     const best=markets.filter((x)=>x.value).sort((a,b)=>b.pin_edge-a.pin_edge)[0]||null;
     if(best){ const p=best.model/100; best.kelly_pct=+Math.min(KELLY_CAP_PCT, KELLY_FRACTION*Math.max(0,(p*best.odds-1)/(best.odds-1))*100).toFixed(1); }
-    out.push({ home:ev.home_team, away:ev.away_team, commence:ev.commence_time, source:"price", bk:true, pin_ready, model_lh:null, model_la:null, markets, pick:best, books_used:cons.books });
+    out.push({ home:ev.home_team, away:ev.away_team, commence:ev.commence_time, source:"price", bk:true, pin_ready, elo: bm? { ...eloPredict(bm.m,ev.home_team,ev.away_team,hca), league_games:bm.n } : null, model_lh:null, model_la:null, markets, pick:best, books_used:cons.books });
   }
   return { matches:out, count:out.length, rule:"price_edge", edge_threshold_pct:BASKET_PE_MIN, basketball:true };
 }
@@ -1009,6 +1026,7 @@ async function notifyNewPicks(since){ try{
 
 async function autosave(){
   const sports=AUTOSAVE_SPORTS; const since=new Date().toISOString();
+  const results=await collectResults();
   const detail={}; let total=0;
   for(const sp of sports){
     try{
@@ -1036,7 +1054,7 @@ async function autosave(){
     }catch(e){ detail[sp]=String(e); }
   }
   const telegram=total>0? await notifyNewPicks(since) : { sent:0, picks:0 };
-  return { total_saved:total, detail, telegram };
+  return { total_saved:total, detail, telegram, results };
 }
 
 Deno.serve(async (req)=>{
@@ -1054,6 +1072,7 @@ Deno.serve(async (req)=>{
     if(body.action==="history") return J(await getHistory(body.sport));
     if(body.action==="settle") return J(await settle());
     if(body.action==="autosave") return J(await autosave());
+    if(body.action==="collect_results") return J(await collectResults());
     if(body.action==="tg_test") return J(await sendTelegram("✅ BetFans bildirim testi — yeni değer seçimleri buraya gelecek.\nhttps://bet-fans.com"));
     if(body.action==="capture_closing") return J(await captureClosing());
     if(body.action==="calibrate") return J(await calibrate());
