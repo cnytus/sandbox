@@ -2,6 +2,7 @@
 // Calistir: npx deno test supabase/functions/bahis-tahmin/model_test.ts
 import { assert, assertEquals, assertAlmostEquals } from "jsr:@std/assert@1";
 import { probs, probsLite, shinDevig, median, norm, findKey, findPair, evalMkt, extraPick, dutchPrice, dnbPrice } from "./model.ts";
+import { basketElo, eloPredict, ELO_MEAN } from "./model.ts";
 import { Phi, overWP, fitMu, sideWP, lineResult } from "./model.ts";
 
 Deno.test("probs: olasiliklar 1'e toplanir, U=1-O, top 4 skor", () => {
@@ -104,4 +105,16 @@ Deno.test("basketbol cizgi cevirisi + sonuc", () => {
   assertEquals(lineResult("O@170.5",90,81),"hit"); assertEquals(lineResult("U@170",85,85),"void"); assertEquals(lineResult("U@170.5",85,86),"miss");
   assertEquals(lineResult("H1@-5.5",90,84),"hit"); assertEquals(lineResult("H1@-5.5",90,85),"miss"); assertEquals(lineResult("H2@+5",90,85),"void");
   assertEquals(lineResult("H2@+5.5",86,81),"hit"); assertEquals(lineResult("O15",2,1),null);
+});
+
+Deno.test("basketbol Elo", () => {
+  const t0=Date.UTC(2026,9,1);
+  // A evde B'yi 3 kez buyuk farkla yener -> A yukselir, beklenen fark A lehine pozitif
+  const g=[0,1,2].map((i)=>({ t:t0+i*86400000, home:"A", away:"B", hs:95, as:80 }));
+  const m=basketElo(g,60); assert(m.R["A"]>ELO_MEAN && m.R["B"]<ELO_MEAN); assertEquals(m.N["A"],3);
+  const p=eloPredict(m,"A","B",60); assert(p.margin>2 && p.p_home>0.5); assertEquals(p.games,3);
+  // bilinmeyen takimlar: yalniz ev avantaji (60 Elo ~ 2.1 sayi)
+  const q=eloPredict({R:{},N:{}},"X","Y",60); assertEquals(q.margin,2.1); assertEquals(q.games,0);
+  // yeni sezonda ortalamaya %25 donus
+  const m2=basketElo([...g,{ t:Date.UTC(2027,9,1), home:"C", away:"D", hs:80, as:79 }],60); assert(m2.R["A"]<m.R["A"] && m2.R["A"]>ELO_MEAN);
 });

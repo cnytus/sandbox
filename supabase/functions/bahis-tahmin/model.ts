@@ -117,3 +117,21 @@ export function bestLineRaw(ev,key,s,win=1.5,exch=/betfair_ex|matchbook/){ const
   for(const [side,L,price,book] of q){ if(Math.abs(L-pin.L)>win) continue; const [w,pu]=sideWP(side,L,mu,s), e=price*w+pu-1;
     if(!best||e>best.e) best={ code:lineCode(key,side,L), price, book, w, pu, e }; }
   return best; }
+
+// ---- Basketbol Elo (2026-09-28, bilgi amacli; secimlere KARISMAZ) ----
+// FiveThirtyEight NBA Elo: K=20, MOV carpani ((MOV+3)^0.8)/(7.5+0.006*kazananin Elo farki), sezon gecisinde 0.75*R + 0.25*1505.
+// Beklenen fark (sayi) = Elo farki / 28. Ev avantaji Elo cinsinden (NBA ~60 = ~2 sayi, Euroleague ~90 = ~3.2 sayi).
+// games: [{t (ms), home, away, hs, as}] zaman sirali.
+export const ELO_MEAN=1505;
+const eloSeason=(t)=>{ const d=new Date(t); return d.getUTCMonth()>=6? d.getUTCFullYear() : d.getUTCFullYear()-1; };
+export function basketElo(games,hca){ const R={}, N={}; let season=null;
+  for(const g of games){ const s=eloSeason(g.t);
+    if(season!=null&&s!==season) for(const k in R) R[k]=0.75*R[k]+0.25*ELO_MEAN;
+    season=s;
+    const rh=R[g.home]??ELO_MEAN, ra=R[g.away]??ELO_MEAN, diff=rh+hca-ra, exp=1/(1+Math.pow(10,-diff/400));
+    const win=g.hs>g.as?1:0, mov=Math.abs(g.hs-g.as), wd=win? diff : -diff;
+    const d=20*(Math.pow(mov+3,0.8)/(7.5+0.006*wd))*(win-exp);
+    R[g.home]=rh+d; R[g.away]=ra-d; N[g.home]=(N[g.home]||0)+1; N[g.away]=(N[g.away]||0)+1; }
+  return { R, N }; }
+export function eloPredict(m,home,away,hca){ const diff=(m.R[home]??ELO_MEAN)+hca-(m.R[away]??ELO_MEAN);
+  return { margin:+(diff/28).toFixed(1), p_home:+(1/(1+Math.pow(10,-diff/400))).toFixed(3), games:Math.min(m.N[home]||0, m.N[away]||0) }; }
