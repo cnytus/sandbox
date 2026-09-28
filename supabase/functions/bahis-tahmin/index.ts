@@ -15,7 +15,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.9";
+const VERSION="10.10";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -402,12 +402,38 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_
     top:model.top.map((t)=>({score:t.s,p:+(t.p*100).toFixed(0)})), markets, pick:best, ...extra };
 }
 
-async function fetchOddsEvents(sport){
+// Oran gecmisi (2026-09-27): taze cekimde etkinlik basina Pinnacle + en iyi (borsa haric) fiyat ozeti -> bahis_tahmin.odds_snapshots.
+// Ek kredi yok. Maca <=24 saat kalanlar her taze cekimde (~15 dk-1 saat), digerleri lig basina en fazla 6 saatte bir; 120 gun saklanir.
+// Anahtar "pazar:taraf[@cizgi]" (taraf H/A/Draw/Over/Under), ornek "h2h:H", "totals:Over@2.5", "spreads:A@5.5".
+function snapOf(ev){ const pin={}, best={};
+  for(const b of (ev.bookmakers||[])){ const ex=EXCHANGE_KEYS.test(b.key||"");
+    for(const m of (b.markets||[])) for(const o of (m.outcomes||[])){ if(!(o.price>1)) continue;
+      const k=m.key+":"+(o.name===ev.home_team?"H":o.name===ev.away_team?"A":o.name)+(o.point!=null?"@"+o.point:"");
+      if(b.key==="pinnacle") pin[k]=o.price; if(!ex&&o.price>(best[k]||0)) best[k]=o.price; } }
+  return { pin, best }; }
+async function saveSnapshots(sport,events){ try{
+  const now=Date.now(); let far=true;
+  try{ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:"snap:"+sport,max_age_seconds:6*3600}); if(data) far=false; }catch(_){ /* yoksa kaydet */ }
+  const rows=[];
+  for(const ev of (events||[])){ const t=new Date(ev.commence_time).getTime(); if(!(t>now)) continue; if(t-now>86400000&&!far) continue;
+    rows.push({ sport, event_id:ev.id, commence_time:ev.commence_time, home:ev.home_team, away:ev.away_team, ...snapOf(ev) }); }
+  if(rows.length){ const {error}=await sb().rpc("bahis_add_odds_snapshots",{p:rows}); if(error) warn("odds snapshots",error); }
+  if(far) await sb().rpc("bahis_set_odds_cache",{sp:"snap:"+sport,p:{t:now}});
+}catch(e){ warn("odds snapshots",e); } }
+
+// Kredi korumasi (2026-09-27, site herkese acik): kalan kredi ODDS_CREDIT_FLOOR altindaysa herkese acik istekler (pub) API'yi
+// cagirmaz, bayat onbellekle yetinir; cron'lar (autosave/kapanis/settle) calismaya devam eder. Kalan kredi her cekimde "credits" anahtarina yazilir.
+const ODDS_CREDIT_FLOOR=2000;
+async function fetchOddsEvents(sport,pub=false){
   try{ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:sport,max_age_seconds:ODDS_CACHE_TTL_S}); if(data) return { events:data, cached:true }; }catch(e){ warn("odds cache read",e); }
+  if(pub){ try{ const {data:cr}=await sb().rpc("bahis_get_odds_cache",{sp:"credits",max_age_seconds:86400});
+    if(cr&&cr.remaining!=null&&cr.remaining<ODDS_CREDIT_FLOOR){ const {data:st}=await sb().rpc("bahis_get_odds_cache",{sp:sport,max_age_seconds:30*86400}); return { events:st||[], cached:true, stale:true }; } }catch(e){ warn("credit guard",e); } }
   const res=await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=${isBasket(sport)?"h2h,spreads,totals":"h2h,totals"}&oddsFormat=decimal`);
   if(!res.ok){ warn(`odds API ${sport} HTTP`,res.status); return { error:res.status }; }
   const events=await res.json();
   try{ await sb().rpc("bahis_set_odds_cache",{sp:sport,p:events}); }catch(e){ warn("odds cache write",e); }
+  await saveSnapshots(sport,events);
+  const rem=Number(res.headers.get("x-requests-remaining")); if(Number.isFinite(rem)){ try{ await sb().rpc("bahis_set_odds_cache",{sp:"credits",p:{remaining:rem}}); }catch(e){ warn("credits write",e); } }
   return { events, cached:false };
 }
 
@@ -441,8 +467,8 @@ function bestLine(ev,key,s){ const best=bestLineRaw(ev,key,s,BASKET_LINE_WIN,EXC
   return { code:best.code, name:best.code, family:key==="totals"?"ou":"hcp", model:+(best.w*100).toFixed(1), mkt:+(best.w*100).toFixed(1), edge:0, odds:best.price,
     odds_pin:null, odds_pin_fair:+((1-best.pu)/best.w).toFixed(3), pin_edge:pe, book:best.book, value: pe>=BASKET_PE_MIN && pe<=PIN_EDGE_MAX_PCT && best.price<=PIN_MAX_ODDS }; }
 
-async function fetchBasket(sport){
-  const oe=await fetchOddsEvents(sport);
+async function fetchBasket(sport,pub=false){
+  const oe=await fetchOddsEvents(sport,pub);
   if(oe.error) return { error:`Oran API hatası (${oe.error}).` };
   const out=[];
   for(const ev of oe.events){
@@ -462,15 +488,15 @@ async function fetchBasket(sport){
   return { matches:out, count:out.length, rule:"price_edge", edge_threshold_pct:BASKET_PE_MIN, basketball:true };
 }
 
-async function fetchFixtures(sport){
-  if(isBasket(sport)) return fetchBasket(sport);
+async function fetchFixtures(sport,pub=false){
+  if(isBasket(sport)) return fetchBasket(sport,pub);
   const params=await getParams();
   const lpAll=await getLeagueParams();
   const lp=lpAll[sport];
   const x12s=(lp&&lp.x12s!=null)? lp.x12s : X12_PROB_SHRINK;
   // Lig bazli yari omur (backtest: EPL 45->250 gun ile model piyasayi gecer); yoksa global model_params degeri
   const halflife=(lp&&lp.halflife_days>0)? lp.halflife_days : params.recency_halflife_days;
-  const oe=await fetchOddsEvents(sport);
+  const oe=await fetchOddsEvents(sport,pub);
   if(oe.error) return { error:`Oran API hatası (${oe.error}).` };
   const events=oe.events;
   const isWC=sport===WORLD_CUP_SPORT;
@@ -544,7 +570,7 @@ async function fetchFixtures(sport){
 }
 
 async function savePreds(picks){ try{ const {data,error}=await sb().rpc("bahis_save_predictions",{p:picks}); if(error) return {ok:false,error:error.message}; return {ok:true,saved:data}; }catch(e){ return {ok:false,error:String(e)}; } }
-async function getHistory(sport){ try{ const {data,error}=await sb().rpc("bahis_history",{lim:300,sp:sport||null}); if(error) return {error:error.message}; return {rows:data}; }catch(e){ return {error:String(e)}; } }
+async function getHistory(sport){ try{ const {data,error}=await sb().rpc("bahis_history",{lim:3000,sp:sport||null}); if(error) return {error:error.message}; return {rows:data}; }catch(e){ return {error:String(e)}; } }
 async function settle(){ try{
   const {data:pend,error}=await sb().rpc("bahis_pending"); if(error) return {error:error.message}; if(!pend||!pend.length) return {settled:0};
   const bySport={}; for(const r of pend){ const sp=r.sport||""; (bySport[sp]=bySport[sp]||[]).push(r); }
@@ -995,7 +1021,7 @@ Deno.serve(async (req)=>{
       if(!ADMIN_KEY) return J({ error:"BAHIS_ADMIN_KEY secret'i tanimli degil; admin action kapali" },503);
       if(req.headers.get("x-admin-key")!==ADMIN_KEY) return J({ error:"yetkisiz" },401);
     }
-    if(body.action==="fixtures") return J(await fetchFixtures(body.sport||WORLD_CUP_SPORT));
+    if(body.action==="fixtures") return J(await fetchFixtures(body.sport||WORLD_CUP_SPORT,true)); // herkese acik: kredi korumasi
     if(body.action==="save") return J(await savePreds(body.picks||[]));
     if(body.action==="history") return J(await getHistory(body.sport));
     if(body.action==="settle") return J(await settle());

@@ -55,6 +55,7 @@ select:focus,input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
 [dir=rtl] .dot{margin-right:0;margin-left:5px}
 .match{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
+.perf{margin:6px 0 12px;font-size:13px}.perf summary{cursor:pointer;font-weight:700;padding:6px 0}.perf table{width:100%;border-collapse:collapse;margin:6px 0 10px}.perf th,.perf td{padding:4px 6px;border-bottom:1px solid var(--line,#e5e7eb);text-align:right}.perf th:first-child,.perf td:first-child{text-align:left}.perf .pos{color:var(--good)}.perf .neg{color:#dc2626}.perf small{opacity:.7}
 .mdt{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px}.mh{display:flex;gap:9px;align-items:center;margin-bottom:12px}.mh input{flex:1;min-width:0;font-weight:600}.mh span{color:var(--muted);font-size:12px;font-weight:600}
 .lr{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-bottom:9px}.lr input{width:100%}
 label.f{display:block;font-size:11px;color:var(--muted);margin:0 0 4px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
@@ -186,6 +187,7 @@ aside::-webkit-scrollbar{display:none;width:0;height:0}
     </select>
   </div>
   <div class="hpsum" id="histSum"></div>
+  <details class="perf" id="histPerfBox"><summary>📊 Performans (lig · pazar · kalibrasyon)</summary><div id="histPerf"></div></details>
   <div id="history"></div>
 </div></div>
 <script>
@@ -312,11 +314,33 @@ function acSet(i){acIndex=i;acMove(0);}
 // ---- Geçmiş / kayıt ----
 async function refreshHistory(sport){const sp=sport?sport:null;try{const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'history',sport:sp})});const d=await r.json();renderHistory(d.rows||[]);}catch(e){renderHistory([]);}}
 let lastHistRows=[];
+// ---- Performans (2026-09-27): lig ve pazar kirilimi (isabet, duz ROI, CLV, en buyuk dusus) + kalibrasyon (tahmin vs gerceklesen, Brier) ----
+const FAMN={'1x2':'Maç sonucu','ou':'Alt/Üst','btts':'KG','extra':'Ek (ÇŞ/Bİ/Ü1,5/A3,5)','hcp':'Handikap'};
+function perfStats(rs){const st=rs.filter(r=>r.result==='hit'||r.result==='miss').sort((a,b)=>String(a.commence_time||a.match_date).localeCompare(String(b.commence_time||b.match_date)));
+ let pl=0,peak=0,dd=0,h=0,nOdds=0;st.forEach(r=>{if(r.result==='hit')h++;if(r.odds){nOdds++;pl+=r.result==='hit'?(+r.odds-1):-1;peak=Math.max(peak,pl);dd=Math.max(dd,peak-pl);}});
+ const cv=rs.map(r=>r.clv_pin_pct!=null?+r.clv_pin_pct:null).filter(x=>x!=null);
+ return {n:st.length,hit:st.length?100*h/st.length:null,roi:nOdds?100*pl/nOdds:null,pl,dd,clv:cv.length?cv.reduce((a,b)=>a+b,0)/cv.length:null,nclv:cv.length};}
+function perfRow(name,s){const f=(x,d=1,sg=true)=>x==null?'—':`<span class="${x>0?'pos':(x<0?'neg':'')}">${sg&&x>0?'+':''}${x.toFixed(d)}</span>`;
+ return `<tr><td>${esc(name)}</td><td>${s.n}</td><td>${s.hit==null?'—':s.hit.toFixed(0)+'%'}</td><td>${f(s.roi)}%</td><td>${f(s.pl,1)}</td><td>${s.dd?'-'+s.dd.toFixed(1):'0'}</td><td>${f(s.clv)}${s.nclv?`<small> (${s.nclv})</small>`:''}</td></tr>`;}
+function perfHtml(rows){if(!rows.length)return '';const head=`<tr><th></th><th>Bahis</th><th>İsabet</th><th>ROI</th><th>Birim</th><th>En büyük düşüş</th><th>CLV %</th></tr>`;
+ const grp=(key,nm)=>{const g={};rows.forEach(r=>{const k=key(r)||'-';(g[k]=g[k]||[]).push(r);});return Object.entries(g).map(([k,v])=>[nm(k),perfStats(v)]).filter(([,s])=>s.n||s.nclv).sort((a,b)=>b[1].n-a[1].n).map(([k,s])=>perfRow(k,s)).join('');};
+ const tot=perfRow('Toplam',perfStats(rows));
+ const byLg=grp(r=>r.sport,k=>lgName(k)),byFam=grp(r=>/^[OU]@/.test(r.market)?'ou':(r.family||(['1','X','2'].includes(r.market)?'1x2':'')),k=>FAMN[k]||k);
+ // kalibrasyon: tahmin olasiligi dilimleri vs gerceklesen
+ const st=rows.filter(r=>(r.result==='hit'||r.result==='miss')&&r.model_prob!=null);const B=[[0,.4],[.4,.5],[.5,.6],[.6,.7],[.7,1.01]];
+ let brier=0;st.forEach(r=>{brier+=Math.pow(+r.model_prob-(r.result==='hit'?1:0),2);});
+ const cal=B.map(([a,b])=>{const x=st.filter(r=>+r.model_prob>=a&&+r.model_prob<b);if(!x.length)return '';const p=x.reduce((s,r)=>s+ +r.model_prob,0)/x.length,o=x.filter(r=>r.result==='hit').length/x.length;
+  return `<tr><td>%${Math.round(a*100)}–${Math.min(100,Math.round(b*100))}</td><td>${x.length}</td><td>%${(p*100).toFixed(0)}</td><td>%${(o*100).toFixed(0)}</td><td>${f2(100*(o-p))}</td></tr>`;}).join('');
+ return `<table>${head}${tot}</table><b>Lig</b><table>${head}${byLg}</table><b>Pazar</b><table>${head}${byFam}</table>`+
+  (st.length?`<b>Kalibrasyon</b> <small>(Brier ${(brier/st.length).toFixed(3)} · ${st.length} bahis; tahmin %60 dediğinde ~%60 tutmalı)</small><table><tr><th>Tahmin dilimi</th><th>Bahis</th><th>Ort. tahmin</th><th>Gerçekleşen</th><th>Fark (puan)</th></tr>${cal}</table>`:'')+
+  `<small>ROI ve birim: her bahse 1 birim (sabit), iade hariç. CLV: alınan oran / Pinnacle adil kapanış − 1. Küçük örneklerde sonuçlar şansa çok bağlıdır.</small>`;}
+function f2(x){return `<span class="${x>0?'pos':(x<0?'neg':'')}">${x>0?'+':''}${x.toFixed(0)}</span>`;}
 function renderHistory(rows0){lastHistRows=rows0||[];const rows=lastHistRows.filter(r=>!r.odds||inMode(+r.odds));const el=document.getElementById('history'),sum=document.getElementById('histSum');if(!el)return;
- if(!rows||!rows.length){el.innerHTML=`<div class="empty" style="padding:32px 0">${t('histNone')}</div>`;if(sum)sum.innerHTML='';return;}
+ if(!rows||!rows.length){el.innerHTML=`<div class="empty" style="padding:32px 0">${t('histNone')}</div>`;if(sum)sum.innerHTML='';const pf=document.getElementById('histPerf');if(pf)pf.innerHTML='';return;}
  let H=0,S=0;rows.forEach(r=>{if(r.result&&r.result!=='void'){S++;if(r.result==='hit')H++;}});const miss=S-H,pend=rows.filter(r=>!r.result).length,acc=S?Math.round(H/S*100):0;
  const clvOf=r=>r.clv_pin_pct!=null?+r.clv_pin_pct:(r.clv_pct!=null?+r.clv_pct:null); // Pinnacle kapanisi varsa o, yoksa max-oran kapanisi
  const clvRows=rows.filter(r=>clvOf(r)!=null);const avgClv=clvRows.length?(clvRows.reduce((a,r)=>a+clvOf(r),0)/clvRows.length):null;
+ const pf=document.getElementById('histPerf');if(pf)pf.innerHTML=perfHtml(rows);
  if(sum)sum.innerHTML=`<span>✅ ${H}</span><span>❌ ${miss}</span><span>⏳ ${pend}</span><span>${t('histAcc')}: <b>${S?acc+'%':'—'}</b></span>`+(avgClv!=null?`<span>CLV: <b>${avgClv>0?'+':''}${avgClv.toFixed(1)}%</b></span>`:'');
  const byd={};rows.forEach(r=>{const k=r.match_date||'-';(byd[k]=byd[k]||[]).push(r);});const dates=Object.keys(byd).sort().reverse();let h='';
  dates.forEach(dt=>{const items=byd[dt];const hit=items.filter(x=>x.result==='hit').length,st2=items.filter(x=>x.result&&x.result!=='void').length;h+=`<div class="hday"><div class="hday-h">${esc(dt)} <span>${st2?('· '+hit+'/'+st2+' '+t('cHit')):''}</span></div>`+items.map(r=>{const s=r.result==='hit'?'✅':(r.result==='miss'?'❌':(r.result==='void'?'➖':'⏳'));const cv=clvOf(r);const clv=cv!=null?` · CLV ${(cv>0?'+':'')}${cv.toFixed(1)}%`:'';return `<div class="hrow"><span>${s}</span><span class="hm">${esc(r.home)} – ${esc(r.away)}</span><span class="hp">${mkn(r.market)}</span><span class="hpr">${r.model_prob?(+r.model_prob*100).toFixed(0)+'%':''}${r.odds?' · '+(+r.odds).toFixed(2):''}${clv}</span><span class="hsc">${esc(r.actual_score||'')}</span></div>`;}).join('')+`</div>`;});el.innerHTML=h;}
