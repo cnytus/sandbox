@@ -15,7 +15,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.10";
+const VERSION="10.11";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -39,13 +39,17 @@ const MKID=["1","X","2","O","U","BY","BN"];
 const MKN={ "1":"MS 1 (Ev)","X":"Beraberlik","2":"MS 2 (Dep)","O":"Üst 2.5","U":"Alt 2.5","BY":"KG Var","BN":"KG Yok" };
 const FAMILY={ "1":"1x2","X":"1x2","2":"1x2","O":"ou","U":"ou","BY":"btts","BN":"btts" };
 // football-data.org kodlari (form yedegi; Sampiyonlar Ligi icin BIRINCIL kaynak - football-data.co.uk'de CL CSV'si yok)
-const COMP={ soccer_epl:"PL", soccer_spain_la_liga:"PD", soccer_italy_serie_a:"SA", soccer_germany_bundesliga:"BL1", soccer_france_ligue_one:"FL1", soccer_uefa_champs_league:"CL" };
-const CSV_COMP={ soccer_epl:"E0", soccer_spain_la_liga:"SP1", soccer_italy_serie_a:"I1", soccer_germany_bundesliga:"D1", soccer_france_ligue_one:"F1", soccer_turkey_super_league:"T1" };
+const COMP={ soccer_epl:"PL", soccer_spain_la_liga:"PD", soccer_italy_serie_a:"SA", soccer_germany_bundesliga:"BL1", soccer_france_ligue_one:"FL1", soccer_uefa_champs_league:"CL", soccer_portugal_primeira_liga:"PPL", soccer_efl_champ:"ELC" };
+const CSV_COMP={ soccer_epl:"E0", soccer_spain_la_liga:"SP1", soccer_italy_serie_a:"I1", soccer_germany_bundesliga:"D1", soccer_france_ligue_one:"F1", soccer_turkey_super_league:"T1",
+  // 2026-09-28: yeni ligler (backtest 22/23-25/26, fiyat-edge %2, x12s 0): Serie B 248 bahis ROI +20 CLV +7,2 · Championship 186 / +8 / +5,1 ·
+  // Iskocya 61 / +13,5 / +4,1 · Portekiz 62 / +6,8 / +4,7. Eredivisie (-15) ve Belcika (-36) ROI negatif -> eklenmedi.
+  soccer_portugal_primeira_liga:"P1", soccer_italy_serie_b:"I2", soccer_efl_champ:"E1", soccer_spl:"SC0" };
 const CSV_ALIAS={ mancity:"manchestercity", manunited:"manchesterunited", nottmforest:"nottinghamforest", wolves:"wolverhamptonwanderers",
   athmadrid:"atleticomadrid", athbilbao:"athleticbilbao", betis:"realbetis", sociedad:"realsociedad", celta:"celtavigo", espanol:"espanyol", vallecano:"rayovallecano",
   mgladbach:"borussiamonchengladbach", einfrankfurt:"eintrachtfrankfurt", fckoln:"fccologne",
   parissg:"parissaintgermain", stetienne:"saintetienne",
-  buyuksehyr:"istanbulbasaksehir" };
+  buyuksehyr:"istanbulbasaksehir",
+  splisbon:"sportinglisbon", academicoviseu:"academicodeviseu", guimaraes:"vitoriasc", qpr:"queensparkrangers", sheffieldweds:"sheffieldwednesday" };
 const WORLD_CUP_SPORT="soccer_fifa_world_cup";
 
 function estimateLambdas(pH,pA,pOver,rho){
@@ -759,7 +763,7 @@ async function calibrate(){
 
 // ---------- v10: walk-forward backtest over football-data.co.uk archives ----------
 async function backtest(body){
-  const sport=body.sport||"soccer_epl"; const code=CSV_COMP[sport]; if(!code) return {error:"csv kodu yok"};
+  const sport=body.sport||"soccer_epl"; const code=CSV_COMP[sport]||(/^[A-Z]{1,2}\d?$/.test(String(body.code||""))? String(body.code) : null); if(!code) return {error:"csv kodu yok"}; // body.code: henuz eklenmemis aday ligler
   const seasons=(Array.isArray(body.seasons)? body.seasons : ["2223","2324","2425","2526","2627"]).filter((s)=>/^\d{4}$/.test(String(s))).slice(0,8);
   if(!seasons.length) return {error:"seasons: 'YYYY' bicimi (orn. 2425), en fazla 8"};
   const cfgIn={}; for(const k of ["sotW","formW","hl","thr","x12s","rho","ouShrink","pinMin","pinMax","maxOdds"]){ const v=+(body.cfg||{})[k]; if(isFinite(v)) cfgIn[k]=v; }
