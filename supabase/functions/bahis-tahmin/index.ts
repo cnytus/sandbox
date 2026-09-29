@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.17";
+const VERSION="10.18";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -1116,7 +1116,7 @@ async function tgLink(memberId){ const bot=await botCfg(); if(!bot) return null;
   await sb().rpc("bahis_token_create",{th:await sha256hex(t),i:memberId,k:"tg_link",minutes:2880}); return `https://t.me/${bot.username}?start=${t}`; }
 async function approveUrl(id,act){ return `${FN_URL}?action=member&id=${id}&act=${act}&s=${await hmacHex(ADMIN_KEY,id+":"+act)}`; }
 async function notifyAdminSignup(m){ const ok=m.phone_verified? "✅ Telegram'da doğrulandı" : "⚠️ doğrulanmadı";
-  await sendTelegram(`🆕 BetFans üyelik başvurusu\n${m.email}\n📱 ${m.phone} (${ok})\n\n✅ Onayla: ${await approveUrl(m.id,"approved")}\n\n❌ Reddet: ${await approveUrl(m.id,"rejected")}`); }
+  await sendTelegram(`🆕 BetFans üyelik başvurusu\n${m.email}\n📱 ${m.phone} (${ok})\n\n✅ Onayla: ${await approveUrl(m.id,"approved")}\n\n❌ Reddet: ${await approveUrl(m.id,"rejected")}\n\n🗑 Sil (kalıcı): ${await approveUrl(m.id,"deleted")}`); }
 const escH=(s)=>String(s).replace(/[&<>"]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const toSite=(k)=>Response.redirect("https://bet-fans.com/#admin="+k,303); // Supabase fonksiyondan HTML sunmaz (text/plain yapar)
 const html=(t,b)=>new Response(`<!doctype html><html lang="tr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escH(t)}</title><body style="font-family:system-ui;padding:32px;max-width:520px;margin:auto"><h2>${escH(t)}</h2><p>${escH(b)}</p><p><a href="https://bet-fans.com">bet-fans.com</a></p></body></html>`,{ headers:{"Content-Type":"text/html; charset=utf-8"} });
@@ -1154,8 +1154,9 @@ async function resetPassword(req,b){ if(!(await allow("rp:"+clientIp(req),3600,1
 
 // Yonetici onay/ret baglantisi (Telegram mesajindan, GET, HMAC imzali)
 async function memberDecision(u){ const id=u.searchParams.get("id")||"", act=u.searchParams.get("act")||"", s=u.searchParams.get("s")||"";
-  if(!ADMIN_KEY||!["approved","rejected"].includes(act)||!safeEq(s,await hmacHex(ADMIN_KEY,id+":"+act))) return toSite("gecersiz");
+  if(!ADMIN_KEY||!["approved","rejected","deleted"].includes(act)||!safeEq(s,await hmacHex(ADMIN_KEY,id+":"+act))) return toSite("gecersiz");
   const {data}=await sb().rpc("bahis_member_by_id",{i:id}); const m=data&&data[0]; if(!m) return toSite("yok");
+  if(act==="deleted"){ await sb().rpc("bahis_member_delete",{i:id}); return toSite("silindi"); } // kalici: uye + oturum/jetonlar (cascade)
   await sb().rpc("bahis_member_update",{i:id,p:{status:act}});
   const bot=await botCfg(); if(bot&&m.tg_chat_id) await botSend(bot,m.tg_chat_id, act==="approved"? "✅ BetFans üyeliğin onaylandı. Tahminler: https://bet-fans.com" : "BetFans üyelik başvurun onaylanmadı.");
   return toSite(act==="approved"? "onaylandi" : "reddedildi"); }
