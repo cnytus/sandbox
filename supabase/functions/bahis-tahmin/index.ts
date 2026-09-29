@@ -1091,7 +1091,7 @@ async function autosave(opt={}){
           lambda_home:m.model_lh, lambda_away:m.model_la, params_version:m.params_version }); }
       let saved=0;
       if(picks.length){ const r=await savePreds(picks); saved=r.saved||0; }
-      detail[sp]={candidates:picks.length, saved};
+      const ms=fx.matches||[]; detail[sp]={matches:ms.length, value:ms.filter((m)=>m.pick&&m.pick.value).length, xpick:ms.filter((m)=>m.xpick).length, next_value:ms.filter((m)=>m.pick&&m.pick.value).map((m)=>m.commence).sort()[0]||null, candidates:picks.length, saved}; // teshis
       total+=saved;
     }catch(e){ detail[sp]=String(e); }
   }
