@@ -293,7 +293,7 @@ async function logout(){await api({action:'logout'});setSess('');member=null;mat
 function val(id){const e=document.getElementById(id);return e?e.value.trim():'';}
 function afterAuth(tg){authBtnRender();if(member&&member.status==='approved'){auto();}else renderLocked(tg);refreshHistory(document.getElementById('histSport').value);}
 let resetToken=(location.hash.match(/reset=([0-9a-f]{64})/)||[])[1]||'';
-const ADMIN_MSG={onaylandi:'✅ Üyelik onaylandı; üyeye Telegram'dan haber verildi.',reddedildi:'Üyelik başvurusu reddedildi.',gecersiz:'⚠️ Onay bağlantısı geçersiz.',yok:'⚠️ Üye kaydı bulunamadı.'};
+const ADMIN_MSG={onaylandi:'✅ Üyelik onaylandı; üyeye Telegram’dan haber verildi.',reddedildi:'Üyelik başvurusu reddedildi.',gecersiz:'⚠️ Onay bağlantısı geçersiz.',yok:'⚠️ Üye kaydı bulunamadı.'};
 async function initAuth(){const am=(location.hash.match(/admin=([a-z]+)/)||[])[1];if(am&&ADMIN_MSG[am]){setTimeout(()=>alert(ADMIN_MSG[am]),300);try{history.replaceState(null,'',location.pathname);}catch(e){}}
  if(resetToken){openAuth('reset');}
  if(SESS()){const d=await api({action:'me'});member=d.member||null;if(!member)setSess('');authBtnRender();if(member&&member.status==='approved'){auto();return;}renderLocked(d.tg_link);return;}
