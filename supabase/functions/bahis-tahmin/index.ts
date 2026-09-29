@@ -25,7 +25,7 @@ const FOOTBALL_API_KEY=Deno.env.get("FOOTBALL_API_KEY")||""; // API-Football (ap
 const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"";
 // Yazan / pahali action'lar (settle, calibrate, backtest, ...) bu header'i ister. pg_cron komutlari da gonderir.
 const ADMIN_KEY=Deno.env.get("BAHIS_ADMIN_KEY")||"";
-const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe","fd_csv","odds_hist","tg_test","collect_results","ah_scan"]);
+const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe","fd_csv","odds_hist","tg_test","collect_results","ah_scan","bot_setup"]);
 // FOOTBALL_DATA_KEY zorunlu degil (CSV birincil form kaynagi; FD yalniz yedek + Dunya Kupasi formu)
 const MISSING_ENV=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","ODDS_API_KEY"].filter((k)=>!Deno.env.get(k));
 // Tani: hangi secret'lar tanimli (degerler asla donmez)
@@ -1182,6 +1182,19 @@ async function tgWebhook(req){ const bot=await botCfg(); if(!bot||!bot.secret||!
     await botSend(bot,chat,`Şifreni sıfırlamak için (30 dk geçerli):\nhttps://bet-fans.com/#reset=${t}`); return new Response("ok"); }
   await botSend(bot,chat,"Komutlar: /sifre — şifre sıfırlama bağlantısı. Site: https://bet-fans.com"); return new Response("ok"); }
 
+// Yonetici: BetFans botunu kur (anahtar yerel .env'den gelir, yanitta DONMEZ). getMe ile dogrular, ayarlara yazar, gizli imzali webhook + komutlar.
+async function botSetup(b){ const token=String(b.token||"").trim();
+  if(!/^\d{6,12}:[A-Za-z0-9_-]{30,}$/.test(token)) return J({ error:"anahtar bicimi gecersiz" },400);
+  const me=await (await fetch(`https://api.telegram.org/bot${token}/getMe`)).json(); if(!me.ok) return J({ error:"Telegram anahtari reddetti" },400);
+  const secret=randomToken();
+  await sb().rpc("bahis_set_setting",{k:"betfans_bot_token",v:token}); await sb().rpc("bahis_set_setting",{k:"betfans_bot_username",v:me.result.username});
+  await sb().rpc("bahis_set_setting",{k:"betfans_bot_secret",v:secret});
+  const wh=await (await fetch(`https://api.telegram.org/bot${token}/setWebhook`,{ method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ url:FN_URL+"?tg=1", secret_token:secret, allowed_updates:["message"], drop_pending_updates:true }) })).json();
+  await fetch(`https://api.telegram.org/bot${token}/setMyCommands`,{ method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ commands:[{ command:"sifre", description:"Şifre sıfırlama bağlantısı" },{ command:"start", description:"Başla" }] }) });
+  return J({ ok:true, username:me.result.username, webhook:!!wh.ok, webhook_msg:wh.description||null }); }
+
 Deno.serve(async (req)=>{
   if(req.method==="OPTIONS") return new Response("ok",{headers:CORS});
   const u0=new URL(req.url);
@@ -1195,6 +1208,7 @@ Deno.serve(async (req)=>{
       if(!ADMIN_KEY) return J({ error:"BAHIS_ADMIN_KEY secret'i tanimli degil; admin action kapali" },503);
       if(req.headers.get("x-admin-key")!==ADMIN_KEY) return J({ error:"yetkisiz" },401);
     }
+    if(body.action==="bot_setup") return await botSetup(body);
     if(body.action==="signup") return await signup(req,body);
     if(body.action==="login") return await login(req,body);
     if(body.action==="me") return await me(req);
