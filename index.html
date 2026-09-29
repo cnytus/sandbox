@@ -6,7 +6,7 @@
 <meta property="og:image" content="https://bet-fans.com/assets/og.jpg"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png"><link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Saira+Condensed:ital,wght@1,700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Saira+Condensed:wght@700&display=swap">
 <style>
 /* Tema "gece maçı" (2026-09-29, docs/specs/2026-09-29-betfans-yeniden-tasarim.md): koyu zemin + neon yeşil, tek tema */
 :root{color-scheme:dark;--bg:#0B1220;--panel:#111A2E;--panel2:#0E1628;--line:#1E2A44;--txt:#F5F7FA;--muted:#9AA6BF;--accent:#22E36B;--accent-soft:rgba(34,227,107,.12);--glow:rgba(34,227,107,.35);--good:#22E36B;--good-txt:#7CF0A8;--good-soft:rgba(34,227,107,.10);--blue-soft:rgba(96,150,255,.12);--blue-txt:#A9C6FF;--bad:#FF5A5F;--amber:#FFB547;--chip:#16213A;--on-accent:#04210F;--shadow:0 10px 28px rgba(0,0,0,.35);--hd:"Saira Condensed","Arial Narrow",sans-serif}
@@ -224,9 +224,9 @@ footer.ft{padding:20px 12px 28px}
 <div class="intro"><div class="sub" data-i18n="sub"></div><div class="disc" data-i18n="disc"></div></div>
 <div class="wrap" id="viewMain"><section id="landing">
 <div id="teaser"></div>
-<h2 class="sec-h">📣 Paylaşım kartları</h2>
-<div class="wn-row pk-row"><a class="pk" href="assets/paylasim/tuttu-2026-09-04-psg-monaco.jpg" target="_blank" rel="noopener"><img src="assets/paylasim/tuttu-2026-09-04-psg-monaco-k.webp" width="432" height="540" loading="lazy" alt="Tuttu: PSG – Monaco, MS 2, oran 7.60, skor 1-2"></a><a class="pk" href="assets/paylasim/tuttu-2026-09-12-crystal-palace-ipswich.jpg" target="_blank" rel="noopener"><img src="assets/paylasim/tuttu-2026-09-12-crystal-palace-ipswich-k.webp" width="432" height="540" loading="lazy" alt="Tuttu: Crystal Palace – Ipswich Town, MS 2, oran 4.30, skor 2-3"></a><a class="pk" href="assets/paylasim/tuttu-2026-09-06-marseille-parisfc.jpg" target="_blank" rel="noopener"><img src="assets/paylasim/tuttu-2026-09-06-marseille-parisfc-k.webp" width="432" height="540" loading="lazy" alt="Tuttu: Marseille – Paris FC, MS 2, oran 4.20, skor 2-3"></a><a class="pk" href="assets/paylasim/tuttu-2026-09-12-aston-villa-nottingham-forest.jpg" target="_blank" rel="noopener"><img src="assets/paylasim/tuttu-2026-09-12-aston-villa-nottingham-forest-k.webp" width="432" height="540" loading="lazy" alt="Tuttu: Aston Villa – Nottingham Forest, MS 2, oran 3.98, skor 1-2"></a><a class="pk" href="assets/paylasim/tuttu-2026-09-20-schalke-elversberg.jpg" target="_blank" rel="noopener"><img src="assets/paylasim/tuttu-2026-09-20-schalke-elversberg-k.webp" width="432" height="540" loading="lazy" alt="Tuttu: Schalke 04 – Elversberg, beraberlik, oran 3.85, skor 0-0"></a></div>
-<p class="wn-note">Görsele tıkla, büyük hâlini aç; Telegram ya da Instagram’da paylaş.</p>
+<div id="pkWrap" hidden><h2 class="sec-h">📣 Paylaşım kartları</h2>
+<div class="wn-row pk-row" id="pkRow"></div>
+<p class="wn-note">Görsele tıkla, büyük hâlini aç; Telegram ya da Instagram’da paylaş.</p></div>
 <div class="hero"><div class="hero-in">
 <span class="kicker">⚽ 11 futbol + 🏀 2 basketbol ligi</span>
 <h2>Piyasanın kaçırdığı <em>oranları</em> yakala</h2>
@@ -387,11 +387,14 @@ async function loadTeaser(){const el=document.getElementById('teaser');if(!el)re
  const li=wins.map(r=>`<div class="wn"><div class="wn-top"><span class="wn-badge">${r.result==='half_hit'?'½ TUTTU':'✅ TUTTU'}</span><span>${r.commence_time?fmtDate(r.commence_time):(r.match_date?new Date(r.match_date).toLocaleDateString(LOC[lang]||'tr-TR',{day:'numeric',month:'short'}):'')}</span></div><div class="wn-m">${esc(r.home)} – ${esc(r.away)}</div><div class="wn-l">${esc(lgName(r.sport))}</div><div class="wn-bot"><div class="wn-mk">${mkn(r.market)}<small>Skor ${esc(r.actual_score||'–')}</small></div><div class="wn-odds">${r.odds?(+r.odds).toFixed(2):''}</div></div></div>`).join('');
  el.innerHTML=`<h2 class="sec-h">🎯 Son tutan tahminler<span class="wn-arr"><button aria-label="Geri" onclick="wnScroll(-1)">‹</button><button aria-label="İleri" onclick="wnScroll(1)">›</button></span></h2><div class="wn-row" id="wnRow">${li}</div><p class="wn-note">Tutmayanlar dahil tüm sonuçlar <a href="#" onclick="showView('history');return false">Geçmiş Tahminler</a> sekmesinde. Geçmiş sonuçlar gelecekteki kazancın garantisi değildir.</p>`;}
 function wnScroll(d){const r=document.getElementById('wnRow');if(r)r.scrollBy({left:d*488,behavior:'smooth'});}
+// Paylaşım kartları (2026-09-29): sunucudaki kart betiği (kart/kart.py, 30 dk) assets/paylasim/kartlar.json yazar; en yeni 12 kart.
+async function loadCards(){const w=document.getElementById('pkWrap');if(!w)return;try{const r=await fetch('assets/paylasim/kartlar.json?v='+Math.floor(Date.now()/3e5));const a=r.ok?await r.json():[];if(!a.length)return;
+ document.getElementById('pkRow').innerHTML=a.map(k=>{const f=encodeURIComponent(k.f);return `<a class="pk" href="assets/paylasim/${f}.jpg" target="_blank" rel="noopener"><img src="assets/paylasim/${f}-k.webp" width="432" height="540" loading="lazy" alt="${esc(k.alt)}"></a>`;}).join('');w.hidden=false;}catch(e){}}
 // Üye olmayan / onay bekleyen: tanıtım sayfası (body.guest). Onay bekleyene hero'da Telegram doğrulama bloğu.
 function renderLocked(tg){document.body.classList.add('guest');const st=member&&member.status;
  document.getElementById('heroCta').innerHTML=st==='pending'?`<div class="pend"><h3>⏳ Üyeliğin onay bekliyor</h3><p>${member.phone_verified?'Telefonun doğrulandı. Onaylandığında Telegram’dan haber vereceğiz.':'Önce telefonunu Telegram’da doğrula; sonra başvurun onaya düşer.'}</p>${tgBlock(tg)}</div>`:`<button class="b1" onclick="openAuth('signup')">Hemen üye ol</button><button class="b2" onclick="openAuth('login')">Giriş yap</button>`;
  document.getElementById('lgStrip').innerHTML=[...document.getElementById('sport').options].map(o=>`<span class="lg">${o.value.startsWith('basketball')?'':'⚽ '}${esc(o.textContent)}</span>`).join('');
- loadTeaser();msg('');}
+ loadTeaser();loadCards();msg('');}
 function openAuth(mode){const m=document.getElementById('authModal');m.style.display='flex';authMode(mode||'login');}
 function closeAuth(){document.getElementById('authModal').style.display='none';}
 function authMode(mode){['login','signup','reset','done'].forEach(k=>{const e=document.getElementById('af_'+k);if(e)e.style.display=k===mode?'block':'none';});['signup','login'].forEach(k=>{const b=document.getElementById('at_'+k);if(b){b.className=k===mode?'b1':'b2';b.style.display=(mode==='reset'||mode==='done')?'none':'';}});document.getElementById('authErr').textContent='';if(mode==='signup')authTs=Date.now();}

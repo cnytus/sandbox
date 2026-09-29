@@ -1,0 +1,5 @@
+# kart betiği sunucuda üretir, repoya girmez
+assets/paylasim/kart-*
+assets/paylasim/kartlar.json
+kart/.env
+kart/state/
