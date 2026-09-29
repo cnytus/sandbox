@@ -16,8 +16,8 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.19";
-const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
+const VERSION="10.20";
+const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
 const ODDS_KEY=Deno.env.get("ODDS_API_KEY")||"";
@@ -25,11 +25,12 @@ const FOOTBALL_API_KEY=Deno.env.get("FOOTBALL_API_KEY")||""; // API-Football (ap
 const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"";
 // Yazan / pahali action'lar (settle, calibrate, backtest, ...) bu header'i ister. pg_cron komutlari da gonderir.
 const ADMIN_KEY=Deno.env.get("BAHIS_ADMIN_KEY")||"";
+const CARD_KEY=Deno.env.get("BETFANS_CARD_KEY")||""; // yalniz card_broadcast (sunucudaki kart betigi)
 const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe","fd_csv","odds_hist","tg_test","collect_results","ah_scan","bot_setup","notify_pending"]);
 // FOOTBALL_DATA_KEY zorunlu degil (CSV birincil form kaynagi; FD yalniz yedek + Dunya Kupasi formu)
 const MISSING_ENV=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","ODDS_API_KEY"].filter((k)=>!Deno.env.get(k));
 // Tani: hangi secret'lar tanimli (degerler asla donmez)
-const ENV_PRESENT=Object.fromEntries(["ODDS_API_KEY","FOOTBALL_DATA_KEY","FOOTBALL_API_KEY","SPORTMONKS_API_KEY","BAHIS_ADMIN_KEY"].map((k)=>[k,!!Deno.env.get(k)]));
+const ENV_PRESENT=Object.fromEntries(["ODDS_API_KEY","FOOTBALL_DATA_KEY","FOOTBALL_API_KEY","SPORTMONKS_API_KEY","BAHIS_ADMIN_KEY","BETFANS_CARD_KEY"].map((k)=>[k,!!Deno.env.get(k)]));
 const SPORTMONKS_KEY=Deno.env.get("SPORTMONKS_API_KEY")||"";
 const SB=createClient(Deno.env.get("SUPABASE_URL")||"", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||"");
 function sb(){ return SB; }
@@ -613,8 +614,10 @@ async function fetchFixtures(sport,pub=false){
 
 async function savePreds(picks){ try{ const {data,error}=await sb().rpc("bahis_save_predictions",{p:picks}); if(error) return {ok:false,error:error.message}; return {ok:true,saved:data}; }catch(e){ return {ok:false,error:String(e)}; } }
 async function getHistory(sport){ try{ const {data,error}=await sb().rpc("bahis_history",{lim:3000,sp:sport||null}); if(error) return {error:error.message}; return {rows:data}; }catch(e){ return {error:String(e)}; } }
-async function settle(){ try{
-  const {data:pend,error}=await sb().rpc("bahis_pending"); if(error) return {error:error.message}; if(!pend||!pend.length) return {settled:0};
+async function settle(only){ try{
+  let {data:pend,error}=await sb().rpc("bahis_pending"); if(error) return {error:error.message};
+  if(Array.isArray(only)&&only.length) pend=(pend||[]).filter((r)=>only.includes(r.sport)); // mac bitimi cron'u: yalniz biten liglerin skorlari
+  if(!pend||!pend.length) return {settled:0};
   const bySport={}; for(const r of pend){ const sp=r.sport||""; (bySport[sp]=bySport[sp]||[]).push(r); }
   const updates=[]; const wcSettled={}; let voided=0;
   const ageDays=(d)=>(Date.now()-new Date(d+"T00:00:00Z").getTime())/86400000;
@@ -1059,9 +1062,13 @@ async function notifyNewPicks(since){ try{
   return { ...(await sendTelegram(lines.join("\n\n"))), picks:rows.length };
 }catch(e){ warn("notifyNewPicks",e); return { sent:0, error:String(e) }; } }
 
-async function autosave(){
-  const sports=AUTOSAVE_SPORTS; const since=new Date().toISOString();
-  const results=await collectResults();
+// 2026-09-29: tek cagrida 13 lig CPU sinirini asiyordu (WORKER_RESOURCE_LIMIT, 14.09'dan beri kayit yok).
+// Cron artik lig basina {sport} ile ayri cagirir (her biri kendi CPU butcesi), sonra {extras:true,since_min} ile
+// sonuc arsivi + Asya handikabi + yonetici bildirimi. Parametresiz cagri eski davranis (tum ligler).
+async function autosave(opt={}){
+  const one=opt.sport&&AUTOSAVE_SPORTS.includes(opt.sport); const sports=one? [opt.sport] : (opt.extras? [] : AUTOSAVE_SPORTS);
+  const since=opt.since_min? new Date(Date.now()-Number(opt.since_min)*60000).toISOString() : new Date().toISOString();
+  const results=one? null : await collectResults();
   const detail={}; let total=0;
   for(const sp of sports){
     try{
@@ -1088,12 +1095,13 @@ async function autosave(){
       total+=saved;
     }catch(e){ detail[sp]=String(e); }
   }
+  if(one) return { total_saved:total, detail };
   const ah=await ahScan();
   const ahPicks=ah.all.filter((x)=>{ const dt=new Date(x.commence).getTime()-Date.now(); return dt>0&&dt<=8*86400000; }).map((x)=>({ sport:x.sport, home:x.home, away:x.away,
     match_date:String(x.commence).slice(0,10), market:x.pick.code, family:"ah", model_prob:x.pick.prob/100, market_prob:x.pick.prob/100, edge_pct:0, odds:x.pick.odds,
     odds_pinnacle:x.pick.fair_odds, pin_edge_pct:x.pick.pin_edge, is_value:true, source:"autosave", commence_time:x.commence }));
   { let saved=0; if(ahPicks.length){ const r=await savePreds(ahPicks); saved=r.saved||0; } total+=saved; detail.asya_handikap={ candidates:ahPicks.length, saved, scan:ah.out }; }
-  const telegram=total>0? await notifyNewPicks(since) : { sent:0, picks:0 };
+  const telegram=(total>0||opt.extras)? await notifyNewPicks(since) : { sent:0, picks:0 };
   return { total_saved:total, detail, telegram, results };
 }
 
@@ -1109,6 +1117,15 @@ async function allow(key,windowS,mx){ try{ const {data,error}=await sb().rpc("ba
 async function sessionMember(req){ const t=req.headers.get("x-session"); if(!t||t.length!==64) return null;
   try{ const {data}=await sb().rpc("bahis_session_member",{th:await sha256hex(t)}); return (data&&data[0])||null; }catch(e){ warn("session",e); return null; } }
 async function newSession(memberId){ const t=randomToken(); await sb().rpc("bahis_session_create",{th:await sha256hex(t),i:memberId,days:30}); return t; }
+// TUTTU karti -> onayli uyeler + yonetici sohbeti (her sohbete bir kez). Gorsel bet-fans.com'da; Telegram URL'den ceker.
+async function cardBroadcast(b){ const f=String(b.f||""); if(!/^kart-[a-z0-9-]{5,160}$/.test(f)) return { error:"gecersiz kart adi" };
+  const bot=await botCfg(); if(!bot) return { sent:0, reason:"bot ayari yok" };
+  const {data,error}=await sb().rpc("bahis_member_chats"); if(error) return { sent:0, error:error.message };
+  const admin=await getSetting("telegram_chat_id"); const chats=[...new Set([...(data||[]).map(String), ...(admin?[String(admin)]:[])])];
+  const photo=`https://bet-fans.com/assets/paylasim/${f}.jpg`, caption=String(b.caption||"").slice(0,1000); let sent=0; const fail=[];
+  for(const chat of chats){ try{ const r=await fetch(`https://api.telegram.org/bot${bot.token}/sendPhoto`,{ method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ chat_id:chat, photo, caption }) }); if(r.ok) sent++; else fail.push(r.status); }catch(e){ warn("cardBroadcast",e); fail.push("hata"); } }
+  return { sent, total:chats.length, fail }; }
 async function botCfg(){ const [token,username,secret]=await Promise.all(["betfans_bot_token","betfans_bot_username","betfans_bot_secret"].map(getSetting)); return token&&username? { token, username, secret } : null; }
 async function botSend(bot,chat,text,extra={}){ try{ await fetch(`https://api.telegram.org/bot${bot.token}/sendMessage`,{ method:"POST", headers:{"Content-Type":"application/json"},
     body:JSON.stringify({ chat_id:chat, text, disable_web_page_preview:true, ...extra }) }); }catch(e){ warn("botSend",e); } }
@@ -1213,6 +1230,7 @@ Deno.serve(async (req)=>{
       if(!ADMIN_KEY) return J({ error:"BAHIS_ADMIN_KEY secret'i tanimli degil; admin action kapali" },503);
       if(req.headers.get("x-admin-key")!==ADMIN_KEY) return J({ error:"yetkisiz" },401);
     }
+    if(body.action==="card_broadcast"){ if(!CARD_KEY||req.headers.get("x-card-key")!==CARD_KEY) return J({ error:"yetkisiz" },401); return J(await cardBroadcast(body)); }
     if(body.action==="bot_setup") return await botSetup(body);
     if(body.action==="notify_pending"){ const {data}=await sb().rpc("bahis_members_pending"); for(const m of (data||[])) await notifyAdminSignup(m); return J({ ok:true, notified:(data||[]).length }); }
     if(body.action==="signup") return await signup(req,body);
@@ -1227,8 +1245,8 @@ Deno.serve(async (req)=>{
     if(body.action==="history"){ // uye olmayanlar yalniz sonuclanmis tahminleri gorur (bekleyen = guncel secim)
       const h=await getHistory(body.sport); const m=await sessionMember(req);
       if((!m||m.status!=="approved")&&h.rows) h.rows=h.rows.filter((r)=>r.result!=null); return J(h); }
-    if(body.action==="settle") return J(await settle());
-    if(body.action==="autosave") return J(await autosave());
+    if(body.action==="settle") return J(await settle(body.sports));
+    if(body.action==="autosave") return J(await autosave({ sport:body.sport, extras:!!body.extras, since_min:body.since_min }));
     if(body.action==="collect_results") return J(await collectResults());
     if(body.action==="ah_scan") return J(await ahScan()); // kaydetmeden tarama (onbellegi gunceller)
     if(body.action==="tg_test") return J(await sendTelegram("✅ BetFans bildirim testi — yeni değer seçimleri buraya gelecek.\nhttps://bet-fans.com"));
