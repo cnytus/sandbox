@@ -1,37 +1,197 @@
 <!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BetFans</title>
-<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<meta name="description" content="Piyasanın kaçırdığı oranları yakala: BetFans 11 futbol ve 2 basketbol liginde en iyi oranı Pinnacle adil fiyatıyla karşılaştırır.">
+<meta name="theme-color" content="#0B1220">
+<meta property="og:type" content="website"><meta property="og:site_name" content="BetFans"><meta property="og:url" content="https://bet-fans.com/">
+<meta property="og:title" content="BetFans — Piyasanın kaçırdığı oranları yakala"><meta property="og:description" content="Piyasanın kaçırdığı oranları yakala: BetFans 11 futbol ve 2 basketbol liginde en iyi oranı Pinnacle adil fiyatıyla karşılaştırır.">
+<meta property="og:image" content="https://bet-fans.com/assets/og.jpg"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png"><link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Saira+Condensed:ital,wght@1,700&display=swap">
 <style>
-:root{color-scheme:light;--bg:#eef4fb;--panel:#fff;--panel2:#f7fafd;--line:#e1e9f2;--txt:#1f2d3d;--muted:#6b7c8f;--accent:#3b6fb0;--accent-soft:#d6e6f7;--good:#2e9e6b;--good-soft:#e3f5ec;--bad:#d9534f;--amber:#d9912f;--chip:#eef3f9;--shadow:0 1px 3px rgba(31,45,61,.06),0 6px 20px rgba(31,45,61,.06)}
+/* Tema "gece maçı" (2026-09-29, docs/specs/2026-09-29-betfans-yeniden-tasarim.md): koyu zemin + neon yeşil, tek tema */
+:root{color-scheme:dark;--bg:#0B1220;--panel:#111A2E;--panel2:#0E1628;--line:#1E2A44;--txt:#F5F7FA;--muted:#9AA6BF;--accent:#22E36B;--accent-soft:rgba(34,227,107,.12);--glow:rgba(34,227,107,.35);--good:#22E36B;--good-txt:#7CF0A8;--good-soft:rgba(34,227,107,.10);--blue-soft:rgba(96,150,255,.12);--blue-txt:#A9C6FF;--bad:#FF5A5F;--amber:#FFB547;--chip:#16213A;--on-accent:#04210F;--shadow:0 10px 28px rgba(0,0,0,.35);--hd:"Saira Condensed","Arial Narrow",sans-serif}
 *{box-sizing:border-box;scrollbar-width:none;-ms-overflow-style:none}
 *::-webkit-scrollbar{display:none!important;width:0!important;height:0!important;background:transparent}
 html,body{overflow-x:hidden}
-body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--txt);font-size:14px;line-height:1.55}
-header{padding:26px 24px 22px;background:linear-gradient(135deg,#4a7fc0,#3b6fb0 55%,#5a93cf);color:#fff;box-shadow:var(--shadow)}
+body{margin:0;font-family:Inter,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:radial-gradient(1100px 520px at 50% -220px,rgba(34,227,107,.10),transparent 70%),var(--bg);color:var(--txt);font-size:14px;line-height:1.55;min-height:100vh}
+/* silik saha çizgisi motifi */
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.05;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800' fill='none' stroke='%23fff' stroke-width='2'%3E%3Crect x='40' y='40' width='1120' height='720'/%3E%3Cline x1='600' y1='40' x2='600' y2='760'/%3E%3Ccircle cx='600' cy='400' r='110'/%3E%3Crect x='40' y='220' width='170' height='360'/%3E%3Crect x='990' y='220' width='170' height='360'/%3E%3C/svg%3E") center/cover no-repeat}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+h1,h2,h3,.hd{font-family:var(--hd);font-style:italic;font-weight:700;letter-spacing:.3px}
+td,.od,.pay,.hpr,.hsc,.wn-odds,.acstake input{font-variant-numeric:tabular-nums}
+header{position:sticky;top:0;z-index:20;padding:12px 24px;background:rgba(11,18,32,.88);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
 header .inner{max-width:1180px;margin:0 auto}
-.toprow{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
-h1{margin:0 0 4px;font-size:22px;font-weight:800;letter-spacing:-.2px;display:flex;align-items:center;gap:9px}
-h1 .tag{font-weight:500;font-size:13px;opacity:.85}
-.sub{color:rgba(255,255,255,.92);font-size:13px;max-width:820px}
-.disc{display:inline-block;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.3);color:#fff;padding:7px 12px;border-radius:9px;font-size:12px;margin-top:13px}
-#lang{background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.35);border-radius:8px;padding:6px 10px;font-size:13px;font-family:inherit;cursor:pointer}
-#lang option{color:#1f2d3d}
+.toprow{display:flex;align-items:center;gap:14px}
+h1.brand{margin:0;font-size:28px;display:flex;align-items:center;gap:10px;white-space:nowrap}
+h1.brand img{width:40px;height:46px;filter:drop-shadow(0 0 10px var(--glow))}
+h1.brand b{color:var(--accent)}
+h1 .tag{font-family:Inter,sans-serif;font-style:normal;font-weight:500;font-size:12px;color:var(--muted);text-transform:none;letter-spacing:0}
+.intro{max-width:1180px;margin:14px auto 0;padding:0 24px}
+.sub{color:var(--muted);font-size:13px;max-width:820px}
+.disc{display:inline-block;background:var(--panel);border:1px solid var(--line);color:var(--muted);padding:7px 12px;border-radius:9px;font-size:12px;margin-top:10px}
+body.guest .intro{display:none}
+#lang{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:13px;cursor:pointer}
+.nav{display:flex;gap:6px;flex:1;align-items:center;margin-left:12px}
+.tab{background:transparent;color:var(--muted);border:1px solid transparent;border-radius:9px;padding:8px 14px;font-weight:600;font-size:13px}
+.tab:hover{color:var(--txt);background:var(--panel)}
+.tab.on{color:var(--accent);background:var(--accent-soft);border-color:rgba(34,227,107,.35)}
+#authBtn{margin-left:auto;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-color:var(--line);color:var(--txt)}
+body.guest #authBtn{background:var(--accent);color:var(--on-accent);border-color:var(--accent);box-shadow:0 0 18px var(--glow)}
 .wrap{max-width:1180px;margin:22px auto;padding:0 24px;display:grid;grid-template-columns:1fr 366px;gap:20px;align-items:start}
 /* v8.5.1: grid blowout fix - grid items default to min-width:auto, so the match table's
    min-content width (~434px) was forcing MAIN wider than small viewports and clipping the
    right side. min-width:0 lets the 1fr track shrink; the table then fits/scrolls in-card. */
 main,aside{min-width:0}
+/* Ziyaretçi (üye değil / onay bekliyor): tanıtım sayfası; maç listesi ve kuponlar gizli */
+#landing{display:none;grid-column:1/-1;min-width:0}
+body.guest #landing{display:block}
+body.guest #viewMain>main,body.guest #viewMain>aside{display:none}
+button{cursor:pointer;font-family:inherit;border:1px solid transparent;border-radius:10px;padding:9px 15px;font-size:13px;font-weight:600;transition:.15s}
+.b1{background:var(--accent);color:var(--on-accent);box-shadow:0 0 0 rgba(0,0,0,0)}.b1:hover{box-shadow:0 0 20px var(--glow);transform:translateY(-1px)}
+.b2{background:transparent;color:var(--txt);border-color:var(--line)}.b2:hover{border-color:var(--accent);color:var(--accent)}
+.bm{padding:6px 11px;font-size:12px}
+.bar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:16px;background:var(--panel);padding:12px;border-radius:14px;border:1px solid var(--line)}
+select,input{background:var(--bg);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 11px;font-size:13px;font-family:inherit;transition:.15s}
+select option{background:var(--panel);color:var(--txt)}
+::placeholder{color:#6B7892;opacity:1}
+input[type=checkbox]{accent-color:var(--accent)}
+select:focus,input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin:0 2px 16px;padding:11px 14px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.legend b{color:var(--txt)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle;box-shadow:0 0 6px var(--glow)}
+[dir=rtl] .dot{margin-right:0;margin-left:5px}
+.match{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:16px;transition:border-color .15s,box-shadow .15s}
+.match:hover{border-color:rgba(34,227,107,.35);box-shadow:0 0 24px rgba(34,227,107,.08)}
+.perf{margin:6px 0 12px;font-size:13px}.perf summary{cursor:pointer;font-weight:700;padding:6px 0}.perf table{width:100%;border-collapse:collapse;margin:6px 0 10px}.perf th,.perf td{padding:4px 6px;border-bottom:1px solid var(--line);text-align:right}.perf th:first-child,.perf td:first-child{text-align:left}.perf .pos{color:var(--good)}.perf .neg{color:var(--bad)}.perf small{color:var(--muted)}
+.mdt{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px}.mh{display:flex;gap:9px;align-items:center;margin-bottom:12px}.mh input{flex:1;min-width:0;font-weight:600}.mh span{color:var(--muted);font-size:12px;font-weight:600}
+.lr{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-bottom:9px}.lr input{width:100%}
+label.f{display:block;font-size:11px;color:var(--muted);margin:10px 0 4px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+#authModal input:not([type=checkbox]){width:100%}
+.src{display:inline-block;font-size:11px;font-weight:600;color:var(--muted);background:var(--chip);border:1px solid var(--line);border-radius:30px;padding:3px 10px;margin:2px 0 8px}
+.src.good{color:var(--good-txt);background:var(--good-soft);border-color:rgba(34,227,107,.35)}
+.pick{background:var(--good-soft);border:1px solid rgba(34,227,107,.35);color:var(--good-txt);border-radius:10px;padding:8px 12px;font-size:12.5px;margin:6px 0 10px;font-weight:600}
+.pick.none{background:var(--panel2);border-color:var(--line);color:var(--muted);font-weight:500}
+.pick.pred{background:var(--blue-soft);border-color:rgba(96,150,255,.35);color:var(--blue-txt)}
+.prow{background:var(--blue-soft)}
+table{width:100%;border-collapse:collapse;margin-top:4px}
+th{text-align:left;font-size:10px;color:var(--muted);padding:7px 8px;border-bottom:2px solid var(--line);text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+[dir=rtl] th{text-align:right}
+td{padding:8px;border-bottom:1px solid var(--line);font-size:13px}tr:last-child td{border-bottom:none}
+.claudecol{font-weight:700;color:var(--accent)}
+.mkt{color:var(--muted)}
+.edge{font-weight:700}.edge.pos{color:var(--good)}.edge.neg{color:var(--bad)}.edge.flat{color:var(--muted)}
+.vrow{background:var(--good-soft)}
+.oc input{width:74px;padding:6px 8px}
+.sc{font-size:11.5px;color:var(--muted);margin-top:11px;padding-top:9px;border-top:1px dashed var(--line)}
+.hint{font-size:11.5px;color:var(--muted);margin:4px 0 10px}
+aside{position:sticky;top:90px;align-self:start;max-height:calc(100vh - 108px);overflow-y:auto;overflow-x:hidden}
+.acwrap h3{font-size:20px;margin:0 0 4px;color:var(--txt);text-transform:uppercase}
+.acstake{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin:0 0 12px}
+.acstake input{width:84px;padding:6px 9px;text-align:right;font-weight:700;color:var(--txt)}
+.carousel{position:relative}
+.cvp{overflow:hidden;border-radius:16px}
+.ctrack{display:flex;transition:transform .28s ease}
+.ctrack>.ac{flex:0 0 100%}
+.carr{position:absolute;top:50px;z-index:3;background:var(--panel2);border:1px solid var(--line);border-radius:50%;width:30px;height:30px;cursor:pointer;font-size:15px;line-height:1;color:var(--accent);padding:0}
+.carr.l{left:0}.carr.r{right:0}
+.cnav{display:flex;justify-content:center;gap:7px;margin-top:11px}
+.cdot{width:8px;height:8px;border-radius:50%;background:var(--line);cursor:pointer;transition:.15s}.cdot.on{background:var(--accent);transform:scale(1.25);box-shadow:0 0 8px var(--glow)}
+.ac{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--panel)}
+.ac-top{padding:14px 16px;color:#fff;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.ac.g .ac-top{background:linear-gradient(135deg,#0E5E33,#14854A)}
+.ac.b .ac-top{background:linear-gradient(135deg,#1B3A6B,#2A5CA8)}
+.ac.s .ac-top{background:linear-gradient(135deg,#6E420C,#A86814)}
+.ac-top .ttl{font-family:var(--hd);font-style:italic;font-weight:700;font-size:19px;line-height:1.15;text-transform:uppercase}
+.ac-top .ttl small{display:block;font-family:Inter,sans-serif;font-style:normal;font-weight:500;font-size:10.5px;opacity:.92;margin-top:3px;text-transform:none}
+.ac-top .hitb{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);border-radius:30px;padding:5px 11px;font-size:11px;font-weight:700;white-space:nowrap;text-align:center}
+.ac-body{padding:6px 16px}
+.ac-leg{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--line)}
+.ac-leg:last-child{border-bottom:none}
+.ac-leg .tm{font-weight:700;font-size:12.5px}
+.ac-leg .mc{display:inline-block;margin-top:4px;font-size:10.5px;color:var(--good-txt);background:var(--accent-soft);border-radius:20px;padding:2px 9px;font-weight:600}
+.ac-leg .od{font-weight:700;color:var(--accent);font-size:16px}
+.ac-foot{display:flex;justify-content:space-between;align-items:center;padding:13px 16px;background:var(--panel2);border-top:1px solid var(--line)}
+.ac-foot .lo{font-size:11px;color:var(--muted)}.ac-foot .lo b{display:block;font-size:16px;color:var(--txt);margin-top:1px}
+.ac-foot .ro{text-align:right}.ac-foot .ro .pay{font-size:20px;font-weight:700;color:var(--good);text-shadow:0 0 12px var(--glow)}.ac-foot .ro small{display:block;font-size:10.5px;color:var(--muted)}
+.ac .empty2{padding:22px 16px;text-align:center;color:var(--muted);font-size:12px}
+.empty{color:var(--muted);text-align:center;padding:18px 10px;font-size:12px;background:var(--panel2);border-radius:12px;border:1px dashed var(--line)}
+#msg{font-size:12px;color:var(--muted);margin-left:4px;font-weight:500}
+.hday{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:12px}
+.hday-h{font-weight:700;font-size:12.5px;margin-bottom:8px;color:var(--txt)}.hday-h span{color:var(--muted);font-weight:600}
+.hrow{display:grid;grid-template-columns:22px 1fr auto auto auto;gap:8px;align-items:center;font-size:12px;padding:6px 0;border-bottom:1px solid var(--line)}
+.hrow:last-child{border-bottom:none}
+.hm{font-weight:600}.hp{color:var(--good-txt)}.hpr{color:var(--muted);font-size:11px}.hsc{color:var(--txt);font-weight:700}
+#viewHistory{max-width:1180px;margin:22px auto;padding:0 24px}
+.hpwrap{max-width:920px}
+.hpbar{display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.hpbar h2{margin:0;font-size:26px;text-transform:uppercase}
+.hpsum{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 16px;font-size:13px;margin-bottom:16px;display:flex;gap:18px;flex-wrap:wrap}
+.hpsum b{color:var(--accent)}
+/* Tanıtım sayfası */
+.sec-h{font-size:26px;text-transform:uppercase;margin:34px 0 14px;display:flex;align-items:center;gap:10px}
+.sec-h:first-child{margin-top:4px}
+.wn-wrap{position:relative}
+.wn-row{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 2px 8px}
+.wn{flex:0 0 232px;scroll-snap-align:start;background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:6px;transition:.15s}
+.wn:hover{border-color:rgba(34,227,107,.5);box-shadow:0 0 22px rgba(34,227,107,.12)}
+.wn-top{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted)}
+.wn-badge{background:var(--accent-soft);color:var(--good-txt);border:1px solid rgba(34,227,107,.4);border-radius:30px;padding:2px 9px;font-weight:700;font-size:11px}
+.wn-m{font-weight:700;font-size:14px;line-height:1.3;min-height:2.6em;overflow-wrap:anywhere}
+.wn-l{font-size:12px;color:var(--muted)}
+.wn-bot{display:flex;justify-content:space-between;align-items:flex-end;margin-top:auto;padding-top:8px;border-top:1px solid var(--line)}
+.wn-mk{font-size:12px;color:var(--txt);font-weight:600}.wn-mk small{display:block;color:var(--muted);font-weight:500}
+.wn-odds{font-family:var(--hd);font-style:italic;font-weight:700;font-size:32px;line-height:1;color:var(--accent);text-shadow:0 0 14px var(--glow)}
+.wn-arr{margin-left:auto;display:flex;gap:6px}
+.wn-arr button{font-family:Inter,sans-serif;font-style:normal;width:34px;height:34px;padding:0;border-radius:50%;background:var(--panel);border:1px solid var(--line);color:var(--accent);font-size:16px}
+.wn-note{font-size:12px;color:var(--muted);margin:6px 0 0}
+.hero{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:22px;padding:56px 48px;margin-top:30px;background:linear-gradient(90deg,rgba(11,18,32,.95) 0%,rgba(11,18,32,.78) 50%,rgba(11,18,32,.25) 100%),url(assets/hero.webp) center 62%/cover}
+.hero-in{max-width:580px}
+.kicker{display:inline-block;font-size:12px;font-weight:600;color:var(--good-txt);background:var(--accent-soft);border:1px solid rgba(34,227,107,.35);border-radius:30px;padding:4px 12px}
+.hero h2{font-size:54px;line-height:1.02;margin:14px 0 12px;text-transform:uppercase}
+.hero h2 em{color:var(--accent);text-shadow:0 0 22px var(--glow)}
+.hero p{color:#C9D2E3;font-size:15px;margin:0 0 20px}
+.hero .cta{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.hero .cta .b1{font-size:15px;padding:12px 22px;box-shadow:0 0 22px var(--glow)}
+.hero .cta .b2{font-size:15px;padding:12px 20px;background:rgba(11,18,32,.5)}
+.trust{list-style:none;padding:0;margin:22px 0 0;display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;color:#C9D2E3}
+.trust li::before{content:"✓ ";color:var(--accent);font-weight:700}
+.pend{background:rgba(11,18,32,.85);border:1px solid var(--line);border-radius:16px;padding:18px}
+.pend h3{margin:0 0 6px;font-size:22px;text-transform:uppercase}
+.lg-strip{display:flex;flex-wrap:wrap;gap:8px}
+.lg{background:var(--panel);border:1px solid var(--line);border-radius:30px;padding:8px 14px;font-size:13px;font-weight:600}
+.faq details{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-bottom:10px;padding:0 16px}
+.faq details[open]{border-color:rgba(34,227,107,.35)}
+.faq summary{cursor:pointer;font-weight:600;padding:14px 0;list-style:none;display:flex;justify-content:space-between;gap:10px}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";color:var(--accent);font-weight:700;font-size:18px;line-height:1}
+.faq details[open] summary::after{content:"–"}
+.faq p{margin:0 0 14px;color:#C9D2E3}
+footer.ft{max-width:1180px;margin:40px auto 0;padding:22px 24px 34px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+footer.ft img{width:26px;height:30px;opacity:.9}
+footer.ft b{color:var(--txt)}
+.age{display:inline-block;border:1px solid var(--bad);color:#FF8A8D;border-radius:6px;padding:1px 6px;font-weight:700}
+#authModal>div{background:var(--panel);border:1px solid var(--line)}
+#authModal .mh3{font-family:var(--hd);font-style:italic;font-weight:700;font-size:20px;text-transform:uppercase}
 /* v8.5 mobile: coupons move ABOVE the match list; sticky/height limits disabled */
 @media(max-width:900px){
 .wrap{grid-template-columns:1fr}
 aside{order:-1;position:static;max-height:none;overflow:visible}
 main{order:2}
+h1 .tag{display:none}
+.toprow{flex-wrap:wrap}
+.nav{order:3;flex:1 0 100%;margin-left:0;overflow-x:auto}
+#lang{margin-left:auto}
 }
 /* v8.5 mobile: stop right-side clipping - tighter paddings + tables scroll inside their card */
 @media(max-width:600px){
-.wrap{padding:0 10px;margin:12px auto;gap:14px}
-header{padding:16px 12px 14px}
-h1{font-size:18px}
+.wrap{padding:0 12px;margin:14px auto;gap:14px}
+header{padding:10px 12px}
+.intro{padding:0 12px}
+h1.brand{font-size:22px}h1.brand img{width:32px;height:37px}
 .sub{font-size:12px}
+.tab{padding:7px 10px;font-size:12.5px}
+#authBtn{max-width:170px}
 .bar{padding:10px;gap:7px}
 .match{padding:12px}
 table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
@@ -40,106 +200,48 @@ td,th{padding:6px 5px;font-size:12px}
 .lr{gap:8px}
 .hrow{font-size:11px;gap:5px}
 .hm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-#viewHistory{padding:0 10px}
+#viewHistory{padding:0 12px}
 .legend{gap:8px;font-size:10.5px;padding:8px 10px}
+.hero{padding:32px 20px;background-position:60% 62%}
+.hero h2{font-size:38px}
+.sec-h{font-size:22px}
+.wn{flex-basis:210px}
+.wn-arr{display:none}
+footer.ft{padding:20px 12px 28px}
 }
-button{cursor:pointer;font-family:inherit;border:none;border-radius:9px;padding:9px 15px;font-size:13px;font-weight:600;transition:.15s}
-.b1{background:var(--accent);color:#fff;box-shadow:0 2px 8px rgba(59,111,176,.28)}.b1:hover{background:#33639c;transform:translateY(-1px)}
-.b2{background:#fff;color:var(--accent);border:1px solid var(--line)}.b2:hover{background:var(--panel2)}
-.bm{padding:6px 11px;font-size:12px}
-.bar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:16px;background:var(--panel);padding:12px;border-radius:12px;border:1px solid var(--line);box-shadow:var(--shadow)}
-select,input{background:#fff;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 11px;font-size:13px;font-family:inherit;transition:.15s}
-select:focus,input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin:0 2px 16px;padding:11px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
-.legend b{color:var(--txt)}
-.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
-[dir=rtl] .dot{margin-right:0;margin-left:5px}
-.match{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
-.perf{margin:6px 0 12px;font-size:13px}.perf summary{cursor:pointer;font-weight:700;padding:6px 0}.perf table{width:100%;border-collapse:collapse;margin:6px 0 10px}.perf th,.perf td{padding:4px 6px;border-bottom:1px solid var(--line,#e5e7eb);text-align:right}.perf th:first-child,.perf td:first-child{text-align:left}.perf .pos{color:var(--good)}.perf .neg{color:#dc2626}.perf small{opacity:.7}
-.mdt{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px}.mh{display:flex;gap:9px;align-items:center;margin-bottom:12px}.mh input{flex:1;min-width:0;font-weight:600}.mh span{color:var(--muted);font-size:12px;font-weight:600}
-.lr{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-bottom:9px}.lr input{width:100%}
-label.f{display:block;font-size:11px;color:var(--muted);margin:0 0 4px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
-.src{display:inline-block;font-size:11px;font-weight:600;color:var(--muted);background:var(--chip);border:1px solid var(--line);border-radius:30px;padding:3px 10px;margin:2px 0 8px}
-.src.good{color:#1d7a51;background:var(--good-soft);border-color:#bfe6d2}
-.pick{background:var(--good-soft);border:1px solid #bfe6d2;color:#1d7a51;border-radius:10px;padding:8px 12px;font-size:12.5px;margin:6px 0 10px;font-weight:600}
-.pick.none{background:var(--panel2);border-color:var(--line);color:var(--muted);font-weight:500}
-.pick.pred{background:var(--accent-soft);border-color:#bcd7f2;color:#28527e}
-.prow{background:var(--accent-soft)}
-table{width:100%;border-collapse:collapse;margin-top:4px}
-th{text-align:left;font-size:10px;color:var(--muted);padding:7px 8px;border-bottom:2px solid var(--line);text-transform:uppercase;letter-spacing:.4px;font-weight:700}
-[dir=rtl] th{text-align:right}
-td{padding:8px;border-bottom:1px solid #eef3f8;font-size:13px}tr:last-child td{border-bottom:none}
-.claudecol{font-weight:700;color:var(--accent)}
-.mkt{color:var(--muted)}
-.edge{font-weight:700}.edge.pos{color:var(--good)}.edge.neg{color:var(--bad)}.edge.flat{color:var(--muted)}
-.vrow{background:var(--good-soft)}
-.oc input{width:74px;padding:6px 8px}
-.sc{font-size:11.5px;color:var(--muted);margin-top:11px;padding-top:9px;border-top:1px dashed var(--line)}
-.hint{font-size:11.5px;color:var(--muted);margin:4px 0 10px}
-aside{position:sticky;top:18px;align-self:start;max-height:calc(100vh - 36px);overflow-y:auto;overflow-x:hidden;scrollbar-width:none;-ms-overflow-style:none}
-aside::-webkit-scrollbar{display:none;width:0;height:0}
-.acwrap h3{font-size:15px;margin:0 0 4px;color:var(--txt);font-weight:800}
-.acstake{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin:0 0 12px}
-.acstake input{width:84px;padding:6px 9px;text-align:right;font-weight:700;color:var(--txt)}
-.carousel{position:relative}
-.cvp{overflow:hidden;border-radius:16px}
-.ctrack{display:flex;transition:transform .28s ease}
-.ctrack>.ac{flex:0 0 100%}
-.carr{position:absolute;top:50px;z-index:3;background:#fff;border:1px solid var(--line);border-radius:50%;width:30px;height:30px;cursor:pointer;font-size:15px;line-height:1;box-shadow:var(--shadow);color:var(--accent);padding:0}
-.carr.l{left:0}.carr.r{right:0}
-.cnav{display:flex;justify-content:center;gap:7px;margin-top:11px}
-.cdot{width:8px;height:8px;border-radius:50%;background:var(--line);cursor:pointer;transition:.15s}.cdot.on{background:var(--accent);transform:scale(1.25)}
-.ac{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--panel);box-shadow:var(--shadow)}
-.ac-top{padding:14px 16px;color:#fff;display:flex;justify-content:space-between;align-items:center;gap:8px}
-.ac.g .ac-top{background:linear-gradient(135deg,#2e9e6b,#41b985)}
-.ac.b .ac-top{background:linear-gradient(135deg,#3b6fb0,#5a93cf)}
-.ac.s .ac-top{background:linear-gradient(135deg,#d9912f,#e0a64a)}
-.ac-top .ttl{font-weight:800;font-size:15px;line-height:1.2}
-.ac-top .ttl small{display:block;font-weight:500;font-size:10.5px;opacity:.92;margin-top:3px}
-.ac-top .hitb{background:rgba(255,255,255,.22);border:1px solid rgba(255,255,255,.25);border-radius:30px;padding:5px 11px;font-size:11px;font-weight:800;white-space:nowrap;text-align:center}
-.ac-body{padding:6px 16px}
-.ac-leg{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid #eef3f8}
-.ac-leg:last-child{border-bottom:none}
-.ac-leg .tm{font-weight:700;font-size:12.5px}
-.ac-leg .mc{display:inline-block;margin-top:4px;font-size:10.5px;color:var(--accent);background:var(--accent-soft);border-radius:20px;padding:2px 9px;font-weight:700}
-.ac-leg .od{font-weight:800;color:var(--txt);font-size:15px}
-.ac-foot{display:flex;justify-content:space-between;align-items:center;padding:13px 16px;background:var(--panel2);border-top:1px solid var(--line)}
-.ac-foot .lo{font-size:11px;color:var(--muted)}.ac-foot .lo b{display:block;font-size:16px;color:var(--txt);margin-top:1px}
-.ac-foot .ro{text-align:right}.ac-foot .ro .pay{font-size:19px;font-weight:800;color:var(--good)}.ac-foot .ro small{display:block;font-size:10.5px;color:var(--muted)}
-.ac .empty2{padding:22px 16px;text-align:center;color:var(--muted);font-size:12px}
-.empty{color:var(--muted);text-align:center;padding:18px 10px;font-size:12px;background:var(--panel2);border-radius:10px;border:1px dashed var(--line)}
-#msg{font-size:12px;color:var(--muted);margin-left:4px;font-weight:500}
-.hday{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px;box-shadow:var(--shadow)}
-.hday-h{font-weight:700;font-size:12.5px;margin-bottom:8px;color:var(--txt)}.hday-h span{color:var(--muted);font-weight:600}
-.hrow{display:grid;grid-template-columns:22px 1fr auto auto auto;gap:8px;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid #eef3f8}
-.hrow:last-child{border-bottom:none}
-.hm{font-weight:600}.hp{color:var(--accent)}.hpr{color:var(--muted);font-size:11px}.hsc{color:var(--txt);font-weight:700}
-.nav{display:flex;gap:7px;margin-top:15px}
-.tab{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:9px;padding:8px 16px;font-weight:700;font-size:13px}
-.tab.on{background:#fff;color:var(--accent);border-color:#fff}
-#viewHistory{max-width:1180px;margin:22px auto;padding:0 24px}
-.hpwrap{max-width:920px}
-.hpbar{display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
-.hpbar h2{margin:0;font-size:18px;font-weight:800}
-.hpsum{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 16px;font-size:13px;box-shadow:var(--shadow);margin-bottom:16px;display:flex;gap:18px;flex-wrap:wrap}
-.hpsum b{color:var(--accent)}
 </style></head><body>
+<script>try{if(!localStorage.getItem('bf_sess'))document.body.classList.add('guest')}catch(e){document.body.classList.add('guest')}</script>
 <header><div class="inner">
 <div class="toprow">
-<div>
-<h1><svg width="30" height="30" viewBox="0 0 64 64" style="vertical-align:-7px;border-radius:8px" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect width="64" height="64" rx="15" fill="rgba(255,255,255,.18)"/><rect x="13" y="37" width="8" height="14" rx="2.5" fill="#fff" opacity="0.85"/><rect x="27" y="29" width="8" height="22" rx="2.5" fill="#fff" opacity="0.92"/><rect x="41" y="21" width="8" height="30" rx="2.5" fill="#fff"/><circle cx="45" cy="14.5" r="6.6" fill="#fff" stroke="#1f6b4a" stroke-width="2.2"/><path d="M45 10.8l1.9 1.4-.72 2.25h-2.36l-.72-2.25z" fill="#1f6b4a"/></svg> BetFans <span class="tag" data-i18n="tag"></span></h1>
-<div class="sub" data-i18n="sub"></div>
-</div>
-<select id="lang" onchange="setLang(this.value)">
+<h1 class="brand"><img src="assets/logo-arma.png" width="49" height="56" alt=""><span>Bet<b>Fans</b></span><span class="tag" data-i18n="tag"></span></h1>
+<div class="nav"><button class="tab on" id="tabMain" onclick="showView('main')" data-i18n="navMain"></button><button class="tab" id="tabHist" onclick="showView('history')" data-i18n="navHist"></button><button class="tab" id="authBtn"></button></div>
+<select id="lang" aria-label="Dil / Language" onchange="setLang(this.value)">
 <option value="tr">Türkçe</option><option value="en">English</option><option value="de">Deutsch</option><option value="ar">العربية</option>
 </select>
 </div>
-<div class="disc" data-i18n="disc"></div>
-<div class="nav"><button class="tab on" id="tabMain" onclick="showView('main')" data-i18n="navMain"></button><button class="tab" id="tabHist" onclick="showView('history')" data-i18n="navHist"></button><button class="tab" id="authBtn" style="margin-left:auto"></button></div>
 </div></header>
-<div class="wrap" id="viewMain"><main>
+<div class="intro"><div class="sub" data-i18n="sub"></div><div class="disc" data-i18n="disc"></div></div>
+<div class="wrap" id="viewMain"><section id="landing">
+<div id="teaser"></div>
+<div class="hero"><div class="hero-in">
+<span class="kicker">⚽ 11 futbol + 🏀 2 basketbol ligi</span>
+<h2>Piyasanın kaçırdığı <em>oranları</em> yakala</h2>
+<p>BetFans her maçta piyasadaki en iyi oranı Pinnacle’ın adil fiyatıyla karşılaştırır ve yalnızca değer taşıyan seçimleri öne çıkarır.</p>
+<div class="cta" id="heroCta"></div>
+<ul class="trust"><li>11 futbol + 2 basketbol ligi</li><li>Pinnacle adil fiyatına göre analiz</li><li>Üyelikler onayla açılır</li></ul>
+</div></div>
+<h2 class="sec-h">Kapsanan ligler</h2>
+<div class="lg-strip" id="lgStrip"></div>
+<h2 class="sec-h">Sık sorulan sorular</h2>
+<div class="faq">
+<details><summary>Tahminler nasıl seçiliyor?</summary><p>Her maç için piyasadaki en iyi oranı, keskin bahis şirketi Pinnacle’ın marjdan arındırılmış adil fiyatıyla karşılaştırırız. En iyi oran adil fiyatın %2–%10 üzerindeyse ve 6,00’ı geçmiyorsa seçim “değer” olarak işaretlenir. Futbolda form tabanlı Poisson modeli ayrıca bilgi amaçlı gösterilir.</p></details>
+<details><summary>Üyelik nasıl açılıyor?</summary><p>E-posta ve cep telefonunla kayıt olursun, ardından telefonunu Telegram botumuzda doğrularsın. Başvurun yönetici onayından sonra açılır ve Telegram’dan haber verilir.</p></details>
+<details><summary>Hangi pazarlar var?</summary><p>Futbolda maç sonucu (1-X-2), alt/üst, karşılıklı gol, çifte şans, beraberlikte iade ve Asya handikabı; basketbolda uzatmalar dahil maç sonucu, alt/üst ve handikap.</p></details>
+<details><summary>Kazanç garantisi var mı?</summary><p>Hayır. Tahminler istatistikseldir, kazanç garantisi yoktur. Tutmayanlar dahil tüm sonuçlar Geçmiş Tahminler’de herkese açık. Yalnızca 18 yaş ve üzeri içindir; kaybetmeyi göze alamayacağın parayla oynama.</p></details>
+</div>
+</section><main>
 <div class="bar">
-  <select id="sport" onchange="onSport()">
+  <select id="sport" aria-label="Lig" onchange="onSport()">
     <option value="soccer_epl" data-i18n="sel_epl"></option>
     <option value="soccer_spain_la_liga" data-i18n="sel_laliga"></option>
     <option value="soccer_italy_serie_a" data-i18n="sel_seriea"></option>
@@ -154,7 +256,7 @@ aside::-webkit-scrollbar{display:none;width:0;height:0}
     <option value="basketball_nba" data-i18n="sel_nba"></option>
     <option value="basketball_euroleague" data-i18n="sel_el"></option>
   </select>
-  <select id="mode" onchange="onMode()" title="">
+  <select id="mode" aria-label="Mod" onchange="onMode()" title="">
     <option value="2" data-i18n="modeSafe"></option>
     <option value="4" data-i18n="modeBal"></option>
     <option value="6" data-i18n="modeAll"></option>
@@ -171,13 +273,13 @@ aside::-webkit-scrollbar{display:none;width:0;height:0}
 <aside>
 <div class="acwrap">
   <h3 data-i18n="acTitle"></h3>
-  <div class="acstake"><label data-i18n="stake"></label><input id="stake" type="number" value="100" oninput="onStake()"><span>TL</span></div>
+  <div class="acstake"><label for="stake" data-i18n="stake"></label><input id="stake" type="number" value="100" oninput="onStake()"><span>TL</span></div>
   <div id="autocoupons"></div>
 </div>
 </aside></div>
 <div id="viewHistory" style="display:none"><div class="hpwrap">
   <div class="hpbar"><h2 data-i18n="navHist"></h2>
-    <select id="histSport" onchange="refreshHistory(this.value)">
+    <select id="histSport" aria-label="Lig" onchange="refreshHistory(this.value)">
       <option value="" data-i18n="histAll"></option>
       <option value="soccer_epl" data-i18n="sel_epl"></option>
       <option value="soccer_spain_la_liga" data-i18n="sel_laliga"></option>
@@ -198,6 +300,7 @@ aside::-webkit-scrollbar{display:none;width:0;height:0}
   <details class="perf" id="histPerfBox"><summary>📊 Performans (lig · pazar · kalibrasyon)</summary><div id="histPerf"></div></details>
   <div id="history"></div>
 </div></div>
+<footer class="ft"><img src="assets/logo-arma.png" width="49" height="56" alt=""><span><b>BetFans</b> · <span class="age">18+</span> · Sorumlu oyna · İstatistiksel tahmin, garanti değildir. Kaybetmeyi göze alamayacağın parayla oynama.</span></footer>
 <script>
 const API="https://wrmyxcittludopbjyits.supabase.co/functions/v1/bahis-tahmin";
 const CODES=["1","X","2","O","U","BY","BN"];
@@ -260,17 +363,12 @@ function SESS(){try{return localStorage.getItem('bf_sess')||'';}catch(e){return 
 function setSess(t){try{if(t)localStorage.setItem('bf_sess',t);else localStorage.removeItem('bf_sess');}catch(e){}}
 function hdr(){const h={'Content-Type':'application/json'};const s=SESS();if(s)h['x-session']=s;return h;}
 async function api(body){const r=await fetch(API,{method:'POST',headers:hdr(),body:JSON.stringify(body)});let d={};try{d=await r.json();}catch(e){}return d;}
-function authBtnRender(){const b=document.getElementById('authBtn');if(!b)return;b.textContent=member?('👤 '+member.email+' · Çıkış'):'🔑 Üye ol / Giriş';b.onclick=member?logout:()=>openAuth('signup');}
-function lockedHtml(tg){const st=member&&member.status;
- const head=st==='pending'?'⏳ Üyeliğin onay bekliyor':'🔒 Güncel tahminler yalnızca üyelere açık';
- const body=st==='pending'?(member.phone_verified?'Telefonun doğrulandı. Onaylandığında Telegram\'dan haber vereceğiz.':'Önce telefonunu Telegram\'da doğrula; sonra başvurun onaya düşer.'):'Oranları, değer seçimlerini ve kuponları görmek için üye ol ya da giriş yap. Sonuçlanmış tahminleri <b>Geçmiş Tahminler</b> sekmesinde herkes görebilir.';
- const btns=st==='pending'?tgBlock(tg):`<button class="b1" onclick="openAuth('signup')">Üye ol</button> <button class="b2" onclick="openAuth('login')">Giriş yap</button>`;
- return `<div class="empty" style="padding:36px 12px;text-align:center"><h3 style="margin:0 0 8px">${head}</h3><p style="margin:0 0 14px">${body}</p>${btns} <button class="b2" onclick="showView('history')">Geçmiş Tahminler</button></div>`;}
+function authBtnRender(){document.body.classList.toggle('guest',!(member&&member.status==='approved'));const b=document.getElementById('authBtn');if(!b)return;b.textContent=member?('👤 '+member.email+' · Çıkış'):'🔑 Üye ol / Giriş';b.onclick=member?logout:()=>openAuth('signup');}
 // Telegram doğrulama bloğu: derin bağlantı (uygulama kuruluysa) + QR (bilgisayardan telefona) + elle "/start <kod>" kopyalama (Telegram Web/masaüstü)
 function tgBlock(link){if(!link)return '';const m=/t\.me\/([A-Za-z0-9_]+)\?start=([0-9a-f]{64})/.exec(link);const bot=m?m[1]:'',cmd=m?('/start '+m[2]):'';
  setTimeout(()=>drawQR(link),0);
  return `<div style="text-align:center"><a class="b1" style="display:inline-block;text-decoration:none;padding:10px 16px" href="${esc(link)}" target="_blank" rel="noopener">📱 Telegram'da telefonunu doğrula</a>
- <p style="font-size:13px;margin:12px 0 6px">Düğme açılmazsa (bilgisayarda Telegram uygulaması yoksa) bu kodu <b>telefonunun kamerasıyla</b> okut:</p><div class="tgqr" data-link="${esc(link)}" style="display:inline-block;background:#fff;padding:8px;border-radius:8px"></div>
+ <p style="font-size:13px;margin:12px 0 6px">Düğme açılmazsa (bilgisayarda Telegram uygulaması yoksa) bu kodu <b>telefonunun kamerasıyla</b> okut:</p><div class="tgqr" data-link="${esc(link)}" style="display:inline-block;background:#fff;padding:8px;border-radius:10px"></div>
  <p style="font-size:13px;margin:10px 0 4px">ya da Telegram'da <b>@${esc(bot)}</b> botunu açıp şu mesajı gönder:</p>
  <div style="display:flex;gap:6px;align-items:center;justify-content:center;flex-wrap:wrap"><code style="font-size:11px;word-break:break-all;max-width:260px;background:rgba(127,127,127,.12);padding:6px;border-radius:6px">${esc(cmd)}</code><button class="b2" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(cmd)}').then(()=>{this.textContent='✓ Kopyalandı'})">Kopyala</button></div></div>`;}
 let qrLib=null;
@@ -282,9 +380,14 @@ function drawQR(link){const go=()=>document.querySelectorAll('.tgqr').forEach(e=
 async function loadTeaser(){const el=document.getElementById('teaser');if(!el)return;let rows=[];try{rows=(await api({action:'history'})).rows||[];}catch(e){}
  const wins=rows.filter(r=>r.result==='hit'||r.result==='half_hit').sort((a,b)=>String(b.commence_time||b.match_date).localeCompare(String(a.commence_time||a.match_date))).slice(0,10);
  if(!wins.length){el.innerHTML='';return;}
- const li=wins.map(r=>`<div class="hrow"><span>✅</span><span class="hm">${esc(r.home)} – ${esc(r.away)}<br><small style="opacity:.6">${esc(lgName(r.sport))} · ${r.commence_time?fmtDate(r.commence_time):esc(r.match_date||'')}</small></span><span class="hp">${mkn(r.market)}</span><span class="hpr">${r.odds?(+r.odds).toFixed(2):''}</span><span class="hsc">${esc(r.actual_score||'')}</span></div>`).join('');
- el.innerHTML=`<div class="hday" style="margin-top:14px"><div class="hday-h">🎯 Son tutan tahminler</div>${li}<p style="font-size:12px;opacity:.7;margin:8px 0 0">Tutmayanlar dahil tüm sonuçlar <a href="#" onclick="showView('history');return false">Geçmiş Tahminler</a> sekmesinde. Geçmiş sonuçlar gelecekteki kazancın garantisi değildir.</p></div>`;}
-function renderLocked(tg){document.getElementById('matches').innerHTML=lockedHtml(tg)+'<div id="teaser"></div>';loadTeaser();document.getElementById('autocoupons').innerHTML=`<div class="empty">${member&&member.status==='pending'?'Onaydan sonra kuponlar burada.':'Kuponlar üyelere açık.'}</div>`;msg('');}
+ const li=wins.map(r=>`<div class="wn"><div class="wn-top"><span class="wn-badge">${r.result==='half_hit'?'½ TUTTU':'✅ TUTTU'}</span><span>${r.commence_time?fmtDate(r.commence_time):(r.match_date?new Date(r.match_date).toLocaleDateString(LOC[lang]||'tr-TR',{day:'numeric',month:'short'}):'')}</span></div><div class="wn-m">${esc(r.home)} – ${esc(r.away)}</div><div class="wn-l">${esc(lgName(r.sport))}</div><div class="wn-bot"><div class="wn-mk">${mkn(r.market)}<small>Skor ${esc(r.actual_score||'–')}</small></div><div class="wn-odds">${r.odds?(+r.odds).toFixed(2):''}</div></div></div>`).join('');
+ el.innerHTML=`<h2 class="sec-h">🎯 Son tutan tahminler<span class="wn-arr"><button aria-label="Geri" onclick="wnScroll(-1)">‹</button><button aria-label="İleri" onclick="wnScroll(1)">›</button></span></h2><div class="wn-row" id="wnRow">${li}</div><p class="wn-note">Tutmayanlar dahil tüm sonuçlar <a href="#" onclick="showView('history');return false">Geçmiş Tahminler</a> sekmesinde. Geçmiş sonuçlar gelecekteki kazancın garantisi değildir.</p>`;}
+function wnScroll(d){const r=document.getElementById('wnRow');if(r)r.scrollBy({left:d*488,behavior:'smooth'});}
+// Üye olmayan / onay bekleyen: tanıtım sayfası (body.guest). Onay bekleyene hero'da Telegram doğrulama bloğu.
+function renderLocked(tg){document.body.classList.add('guest');const st=member&&member.status;
+ document.getElementById('heroCta').innerHTML=st==='pending'?`<div class="pend"><h3>⏳ Üyeliğin onay bekliyor</h3><p>${member.phone_verified?'Telefonun doğrulandı. Onaylandığında Telegram’dan haber vereceğiz.':'Önce telefonunu Telegram’da doğrula; sonra başvurun onaya düşer.'}</p>${tgBlock(tg)}</div>`:`<button class="b1" onclick="openAuth('signup')">Hemen üye ol</button><button class="b2" onclick="openAuth('login')">Giriş yap</button>`;
+ document.getElementById('lgStrip').innerHTML=[...document.getElementById('sport').options].map(o=>`<span class="lg">${o.value.startsWith('basketball')?'':'⚽ '}${esc(o.textContent)}</span>`).join('');
+ loadTeaser();msg('');}
 function openAuth(mode){const m=document.getElementById('authModal');m.style.display='flex';authMode(mode||'login');}
 function closeAuth(){document.getElementById('authModal').style.display='none';}
 function authMode(mode){['login','signup','reset','done'].forEach(k=>{const e=document.getElementById('af_'+k);if(e)e.style.display=k===mode?'block':'none';});['signup','login'].forEach(k=>{const b=document.getElementById('at_'+k);if(b){b.className=k===mode?'b1':'b2';b.style.display=(mode==='reset'||mode==='done')?'none':'';}});document.getElementById('authErr').textContent='';if(mode==='signup')authTs=Date.now();}
@@ -418,23 +521,23 @@ initAuth();
 let lastAutoRefresh=Date.now();
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden && member&&member.status==='approved' && Date.now()-lastAutoRefresh>60000){ lastAutoRefresh=Date.now(); auto(); } });
 </script>
-<div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)closeAuth()">
-<div style="background:var(--card,#fff);color:inherit;border-radius:14px;max-width:400px;width:100%;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.25);max-height:92vh;overflow:auto">
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>BetFans üyelik</b><button class="b2 bm" onclick="closeAuth()">✕</button></div>
+<div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(5,8,15,.78);z-index:50;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)closeAuth()">
+<div style="border-radius:16px;max-width:400px;width:100%;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.25);max-height:92vh;overflow:auto">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><span class="mh3">BetFans üyelik</span><button class="b2 bm" aria-label="Kapat" onclick="closeAuth()">✕</button></div>
 <div id="authTabs" style="display:flex;gap:6px;margin-bottom:12px"><button class="b1" id="at_signup" style="flex:1" onclick="authMode('signup')">Üye ol</button><button class="b2" id="at_login" style="flex:1" onclick="authMode('login')">Giriş yap</button></div>
-<div id="af_login"><label class="f">E-posta</label><input id="li_email" type="email" autocomplete="username"><label class="f">Şifre</label><input id="li_pass" type="password" autocomplete="current-password">
+<div id="af_login"><label class="f" for="li_email">E-posta</label><input id="li_email" type="email" autocomplete="username"><label class="f" for="li_pass">Şifre</label><input id="li_pass" type="password" autocomplete="current-password">
 <button class="b1" style="width:100%;margin-top:12px" onclick="doLogin()">Giriş yap</button>
 <p style="font-size:13px;margin:10px 0 0">Hesabın yok mu? <a href="#" onclick="authMode('signup');return false">Üye ol</a> · Şifreni mi unuttun? Telegram'da BetFans botuna <b>/sifre</b> yaz.</p></div>
-<div id="af_signup" style="display:none"><label class="f">E-posta</label><input id="su_email" type="email" autocomplete="email">
-<label class="f">Cep telefonu</label><input id="su_phone" type="tel" autocomplete="tel" placeholder="0532 123 45 67">
-<label class="f">Şifre (en az 8 karakter)</label><input id="su_pass" type="password" autocomplete="new-password"><label class="f">Şifre tekrar</label><input id="su_pass2" type="password" autocomplete="new-password">
+<div id="af_signup" style="display:none"><label class="f" for="su_email">E-posta</label><input id="su_email" type="email" autocomplete="email">
+<label class="f" for="su_phone">Cep telefonu</label><input id="su_phone" type="tel" autocomplete="tel" placeholder="0532 123 45 67">
+<label class="f" for="su_pass">Şifre (en az 8 karakter)</label><input id="su_pass" type="password" autocomplete="new-password"><label class="f" for="su_pass2">Şifre tekrar</label><input id="su_pass2" type="password" autocomplete="new-password">
 <input id="su_web" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
 <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;margin-top:10px"><input id="su_kvkk" type="checkbox" style="width:auto;margin-top:2px"><span>18 yaşından büyüğüm. E-posta ve telefon numaram yalnızca üyelik doğrulaması ve hesap güvenliği için işlenir, üçüncü kişilerle paylaşılmaz; istediğimde silinmesini talep edebilirim (KVKK aydınlatma).</span></label>
 <button class="b1" style="width:100%;margin-top:12px" onclick="doSignup()">Üye ol</button>
 <p style="font-size:13px;margin:10px 0 0">Üyelikler yönetici onayıyla açılır. Kayıttan sonra telefonunu Telegram'da doğrulaman istenir. <a href="#" onclick="authMode('login');return false">Giriş yap</a></p></div>
-<div id="af_reset" style="display:none"><label class="f">Yeni şifre</label><input id="rs_pass" type="password" autocomplete="new-password"><label class="f">Yeni şifre tekrar</label><input id="rs_pass2" type="password" autocomplete="new-password">
+<div id="af_reset" style="display:none"><label class="f" for="rs_pass">Yeni şifre</label><input id="rs_pass" type="password" autocomplete="new-password"><label class="f" for="rs_pass2">Yeni şifre tekrar</label><input id="rs_pass2" type="password" autocomplete="new-password">
 <button class="b1" style="width:100%;margin-top:12px" onclick="doReset()">Şifreyi değiştir</button></div>
 <div id="af_done" style="display:none"><p><b>Kaydın alındı.</b> Telefonunu doğrula; yönetici onayından sonra güncel tahminler açılır ve Telegram'dan haber verilir.</p><div id="af_done_tg"></div></div>
-<div id="authErr" style="color:#dc2626;font-size:13px;margin-top:10px;min-height:1em"></div>
+<div id="authErr" style="color:var(--bad);font-size:13px;margin-top:10px;min-height:1em"></div>
 </div></div>
 </body></html>
