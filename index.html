@@ -270,13 +270,13 @@ function lockedHtml(tg){const st=member&&member.status;
 function tgBlock(link){if(!link)return '';const m=/t\.me\/([A-Za-z0-9_]+)\?start=([0-9a-f]{64})/.exec(link);const bot=m?m[1]:'',cmd=m?('/start '+m[2]):'';
  setTimeout(()=>drawQR(link),0);
  return `<div style="text-align:center"><a class="b1" style="display:inline-block;text-decoration:none;padding:10px 16px" href="${esc(link)}" target="_blank" rel="noopener">📱 Telegram'da telefonunu doğrula</a>
- <p style="font-size:13px;margin:12px 0 6px">Düğme açılmazsa (bilgisayarda Telegram uygulaması yoksa) bu kodu <b>telefonunun kamerasıyla</b> okut:</p><div class="tgqr" style="display:inline-block;background:#fff;padding:8px;border-radius:8px"></div>
+ <p style="font-size:13px;margin:12px 0 6px">Düğme açılmazsa (bilgisayarda Telegram uygulaması yoksa) bu kodu <b>telefonunun kamerasıyla</b> okut:</p><div class="tgqr" data-link="${esc(link)}" style="display:inline-block;background:#fff;padding:8px;border-radius:8px"></div>
  <p style="font-size:13px;margin:10px 0 4px">ya da Telegram'da <b>@${esc(bot)}</b> botunu açıp şu mesajı gönder:</p>
  <div style="display:flex;gap:6px;align-items:center;justify-content:center;flex-wrap:wrap"><code style="font-size:11px;word-break:break-all;max-width:260px;background:rgba(127,127,127,.12);padding:6px;border-radius:6px">${esc(cmd)}</code><button class="b2" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(cmd)}').then(()=>{this.textContent='✓ Kopyalandı'})">Kopyala</button></div></div>`;}
 let qrLib=null;
-function drawQR(link){const els=[...document.querySelectorAll('.tgqr')].filter(e=>!e.dataset.done);if(!els.length)return;
- const go=()=>els.forEach(e=>{e.dataset.done='1';try{new QRCode(e,{text:link,width:160,height:160,correctLevel:QRCode.CorrectLevel.M});}catch(_){e.style.display='none';}});
- if(window.QRCode)return go();if(!qrLib){qrLib=document.createElement('script');qrLib.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';document.head.appendChild(qrLib);}qrLib.addEventListener('load',go);}
+// Her .tgqr kutusuna TEK QR: kutu çizim anında işaretlenir, kütüphane tek kez yüklenir, yükleme dinleyicisi tek (çift QR hatası 2026-09-29)
+function drawQR(link){const go=()=>document.querySelectorAll('.tgqr').forEach(e=>{if(e.dataset.done)return;e.dataset.done='1';e.innerHTML='';try{new QRCode(e,{text:e.dataset.link||link,width:160,height:160,correctLevel:QRCode.CorrectLevel.M});}catch(_){e.style.display='none';}});
+ if(window.QRCode)return go();if(!qrLib){qrLib=document.createElement('script');qrLib.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';qrLib.onload=()=>go();document.head.appendChild(qrLib);}}
 // Tanıtım (2026-09-29): üye olmayana ana sayfada son 10 TUTAN tahmin (kullanıcı kararı: özet satırı yok).
 // Tutmayanlar dahil tüm sonuçlar Geçmiş sekmesinde herkese açık; not bunu ve "garanti değildir"i söyler.
 async function loadTeaser(){const el=document.getElementById('teaser');if(!el)return;let rows=[];try{rows=(await api({action:'history'})).rows||[];}catch(e){}
