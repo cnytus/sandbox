@@ -1,0 +1,15 @@
+# BetFans otomatik TUTTU kartı: root crontab'tan 30 dk'da bir `docker compose run --rm kart` (servis değil, tek seferlik).
+# name: ŞART (co-host kuralı). Port yok. Çıktı: sitenin assets/paylasim klasörü; durum: ./state
+name: betfans-kart
+services:
+  kart:
+    build: .
+    image: betfans-kart:latest
+    env_file: .env
+    environment:
+      OUT: /out
+      STATE: /state
+    volumes:
+      - /opt/betfans/site/assets/paylasim:/out
+      - ./state:/state
+    restart: "no"
