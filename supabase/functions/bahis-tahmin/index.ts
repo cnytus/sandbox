@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.15";
+const VERSION="10.16";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -1044,7 +1044,8 @@ function mktLabel(c){ let m=/^AH([12])@(.+)$/.exec(c||""); if(m) return "Asya Hn
   m=/^H([12])@(.+)$/.exec(c||""); if(m) return "Hnd. MS "+m[1]+" ("+m[2]+")"; return MKN[c]||XMKN[c]||c; }
 async function getSetting(k){ try{ const {data,error}=await sb().rpc("bahis_get_setting",{k}); if(error) throw error; return data||null; }catch(e){ warn("setting "+k,e); return null; } }
 async function sendTelegram(text){
-  const tok=await getSetting("telegram_bot_token"), chat=await getSetting("telegram_chat_id"); if(!tok||!chat) return { sent:0, reason:"ayar yok" };
+  // 2026-09-29: yonetici bildirimleri BetFans botundan (@Batfanbot; yonetici botu baslatti), yoksa JW botu (CCG Leads) yedek
+  const tok=(await getSetting("betfans_bot_token"))||(await getSetting("telegram_bot_token")), chat=await getSetting("telegram_chat_id"); if(!tok||!chat) return { sent:0, reason:"ayar yok" };
   const parts=[]; let cur=""; for(const ln of text.split("\n")){ if((cur+ln).length>3800){ parts.push(cur); cur=""; } cur+=ln+"\n"; } if(cur.trim()) parts.push(cur);
   let sent=0; for(const t of parts){ try{ const r=await fetch(`https://api.telegram.org/bot${tok}/sendMessage`,{ method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({ chat_id:chat, text:t, disable_web_page_preview:true }) }); if(r.ok) sent++; else warn("telegram HTTP",r.status); }catch(e){ warn("telegram",e); } }
@@ -1117,6 +1118,7 @@ async function approveUrl(id,act){ return `${FN_URL}?action=member&id=${id}&act=
 async function notifyAdminSignup(m){ const ok=m.phone_verified? "✅ Telegram'da doğrulandı" : "⚠️ doğrulanmadı";
   await sendTelegram(`🆕 BetFans üyelik başvurusu\n${m.email}\n📱 ${m.phone} (${ok})\n\n✅ Onayla: ${await approveUrl(m.id,"approved")}\n\n❌ Reddet: ${await approveUrl(m.id,"rejected")}`); }
 const escH=(s)=>String(s).replace(/[&<>"]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const toSite=(k)=>Response.redirect("https://bet-fans.com/#admin="+k,303); // Supabase fonksiyondan HTML sunmaz (text/plain yapar)
 const html=(t,b)=>new Response(`<!doctype html><html lang="tr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escH(t)}</title><body style="font-family:system-ui;padding:32px;max-width:520px;margin:auto"><h2>${escH(t)}</h2><p>${escH(b)}</p><p><a href="https://bet-fans.com">bet-fans.com</a></p></body></html>`,{ headers:{"Content-Type":"text/html; charset=utf-8"} });
 
 async function signup(req,b){ const ip=clientIp(req);
@@ -1151,11 +1153,11 @@ async function resetPassword(req,b){ if(!(await allow("rp:"+clientIp(req),3600,1
 
 // Yonetici onay/ret baglantisi (Telegram mesajindan, GET, HMAC imzali)
 async function memberDecision(u){ const id=u.searchParams.get("id")||"", act=u.searchParams.get("act")||"", s=u.searchParams.get("s")||"";
-  if(!ADMIN_KEY||!["approved","rejected"].includes(act)||!safeEq(s,await hmacHex(ADMIN_KEY,id+":"+act))) return html("Geçersiz bağlantı","İmza doğrulanamadı.");
-  const {data}=await sb().rpc("bahis_member_by_id",{i:id}); const m=data&&data[0]; if(!m) return html("Bulunamadı","Üye kaydı yok.");
+  if(!ADMIN_KEY||!["approved","rejected"].includes(act)||!safeEq(s,await hmacHex(ADMIN_KEY,id+":"+act))) return toSite("gecersiz");
+  const {data}=await sb().rpc("bahis_member_by_id",{i:id}); const m=data&&data[0]; if(!m) return toSite("yok");
   await sb().rpc("bahis_member_update",{i:id,p:{status:act}});
   const bot=await botCfg(); if(bot&&m.tg_chat_id) await botSend(bot,m.tg_chat_id, act==="approved"? "✅ BetFans üyeliğin onaylandı. Tahminler: https://bet-fans.com" : "BetFans üyelik başvurun onaylanmadı.");
-  return html(act==="approved"? "Onaylandı ✅" : "Reddedildi", `${m.email} · ${m.phone}${m.phone_verified?" (Telegram doğrulamalı)":""}`); }
+  return toSite(act==="approved"? "onaylandi" : "reddedildi"); }
 
 // BetFans Telegram botu webhook'u: /start <jeton> -> hesabi bagla, numara iste; kisi paylasimi -> telefon dogrulandi; /sifre -> sifirlama baglantisi
 async function tgWebhook(req){ const bot=await botCfg(); if(!bot||!bot.secret||!safeEq(req.headers.get("x-telegram-bot-api-secret-token"),bot.secret)) return new Response("no",{status:401});
