@@ -264,8 +264,19 @@ function authBtnRender(){const b=document.getElementById('authBtn');if(!b)return
 function lockedHtml(tg){const st=member&&member.status;
  const head=st==='pending'?'⏳ Üyeliğin onay bekliyor':'🔒 Güncel tahminler yalnızca üyelere açık';
  const body=st==='pending'?(member.phone_verified?'Telefonun doğrulandı. Onaylandığında Telegram\'dan haber vereceğiz.':'Önce telefonunu Telegram\'da doğrula; sonra başvurun onaya düşer.'):'Oranları, değer seçimlerini ve kuponları görmek için üye ol ya da giriş yap. Sonuçlanmış tahminleri <b>Geçmiş Tahminler</b> sekmesinde herkes görebilir.';
- const btns=st==='pending'?(tg?`<a class="b1" style="display:inline-block;text-decoration:none;padding:10px 16px" href="${esc(tg)}" target="_blank" rel="noopener">📱 Telegram'da doğrula</a>`:''):`<button class="b1" onclick="openAuth('signup')">Üye ol</button> <button class="b2" onclick="openAuth('login')">Giriş yap</button>`;
+ const btns=st==='pending'?tgBlock(tg):`<button class="b1" onclick="openAuth('signup')">Üye ol</button> <button class="b2" onclick="openAuth('login')">Giriş yap</button>`;
  return `<div class="empty" style="padding:36px 12px;text-align:center"><h3 style="margin:0 0 8px">${head}</h3><p style="margin:0 0 14px">${body}</p>${btns} <button class="b2" onclick="showView('history')">Geçmiş Tahminler</button></div>`;}
+// Telegram doğrulama bloğu: derin bağlantı (uygulama kuruluysa) + QR (bilgisayardan telefona) + elle "/start <kod>" kopyalama (Telegram Web/masaüstü)
+function tgBlock(link){if(!link)return '';const m=/t\.me\/([A-Za-z0-9_]+)\?start=([0-9a-f]{64})/.exec(link);const bot=m?m[1]:'',cmd=m?('/start '+m[2]):'';
+ setTimeout(()=>drawQR(link),0);
+ return `<div style="text-align:center"><a class="b1" style="display:inline-block;text-decoration:none;padding:10px 16px" href="${esc(link)}" target="_blank" rel="noopener">📱 Telegram'da telefonunu doğrula</a>
+ <p style="font-size:13px;margin:12px 0 6px">Düğme açılmazsa (bilgisayarda Telegram uygulaması yoksa) bu kodu <b>telefonunun kamerasıyla</b> okut:</p><div class="tgqr" style="display:inline-block;background:#fff;padding:8px;border-radius:8px"></div>
+ <p style="font-size:13px;margin:10px 0 4px">ya da Telegram'da <b>@${esc(bot)}</b> botunu açıp şu mesajı gönder:</p>
+ <div style="display:flex;gap:6px;align-items:center;justify-content:center;flex-wrap:wrap"><code style="font-size:11px;word-break:break-all;max-width:260px;background:rgba(127,127,127,.12);padding:6px;border-radius:6px">${esc(cmd)}</code><button class="b2" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(cmd)}').then(()=>{this.textContent='✓ Kopyalandı'})">Kopyala</button></div></div>`;}
+let qrLib=null;
+function drawQR(link){const els=[...document.querySelectorAll('.tgqr')].filter(e=>!e.dataset.done);if(!els.length)return;
+ const go=()=>els.forEach(e=>{e.dataset.done='1';try{new QRCode(e,{text:link,width:160,height:160,correctLevel:QRCode.CorrectLevel.M});}catch(_){e.style.display='none';}});
+ if(window.QRCode)return go();if(!qrLib){qrLib=document.createElement('script');qrLib.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';document.head.appendChild(qrLib);}qrLib.addEventListener('load',go);}
 function renderLocked(tg){document.getElementById('matches').innerHTML=lockedHtml(tg);document.getElementById('autocoupons').innerHTML=`<div class="empty">${member&&member.status==='pending'?'Onaydan sonra kuponlar burada.':'Kuponlar üyelere açık.'}</div>`;msg('');}
 function openAuth(mode){const m=document.getElementById('authModal');m.style.display='flex';authMode(mode||'login');}
 function closeAuth(){document.getElementById('authModal').style.display='none';}
@@ -276,7 +287,7 @@ async function doSignup(){if(val('su_pass')!==val('su_pass2'))return authErr('Ş
  const d=await api({action:'signup',email:val('su_email'),phone:val('su_phone'),password:val('su_pass'),kvkk:document.getElementById('su_kvkk').checked,hp:val('su_web'),ts:authTs});
  if(!d.ok)return authErr(d.error||'Kayıt yapılamadı.');if(!d.token){authMode('done');return;}
  setSess(d.token);member={email:d.email,status:d.status,phone_verified:false};authMode('done');
- document.getElementById('af_done_tg').innerHTML=d.tg_link?`<a class="b1" style="display:inline-block;text-decoration:none;padding:10px 16px" href="${esc(d.tg_link)}" target="_blank" rel="noopener">📱 Telegram'da telefonunu doğrula</a>`:'';afterAuth(d.tg_link);}
+ document.getElementById('af_done_tg').innerHTML=tgBlock(d.tg_link);afterAuth(d.tg_link);}
 async function doReset(){if(val('rs_pass')!==val('rs_pass2'))return authErr('Şifreler aynı değil.');const d=await api({action:'reset_password',token:resetToken,password:val('rs_pass')});if(!d.ok)return authErr(d.error||'Şifre değiştirilemedi.');try{history.replaceState(null,'',location.pathname);}catch(e){}authMode('login');authErr('✅ Şifren değişti, giriş yapabilirsin.');}
 async function logout(){await api({action:'logout'});setSess('');member=null;matches=[];couponPool={};authBtnRender();renderLocked();refreshHistory(document.getElementById('histSport').value);}
 function val(id){const e=document.getElementById(id);return e?e.value.trim():'';}
