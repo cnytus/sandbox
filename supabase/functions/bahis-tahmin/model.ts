@@ -135,3 +135,23 @@ export function basketElo(games,hca){ const R={}, N={}; let season=null;
   return { R, N }; }
 export function eloPredict(m,home,away,hca){ const diff=(m.R[home]??ELO_MEAN)+hca-(m.R[away]??ELO_MEAN);
   return { margin:+(diff/28).toFixed(1), p_home:+(1/(1+Math.pow(10,-diff/400))).toFixed(3), games:Math.min(m.N[home]||0, m.N[away]||0) }; }
+
+// ---- Futbol Asya handikabi (2026-09-29) ----
+// Kod "AH1@-0.75" (ev handikabi) / "AH2@+0.75" (deplasman). Ceyrek cizgi = iki yarim bahis -> yarim kazanc/kayip.
+// Sonuc: hit / miss / void (iade) / half_hit (yarisi kazanir, yarisi iade) / half_miss (yarisi kaybeder, yarisi iade).
+export function ahResult(code,hs,as){ const m=/^AH([12])@([+-]?\d+(?:\.\d+)?)$/.exec(code||""); if(!m) return null;
+  const d=(m[1]==="1"? hs-as : as-hs), L=+m[2], q=Math.round(L*4), halves=(q%2===0)? [L] : [L-0.25,L+0.25];
+  const s=halves.map((x)=>{ const r=d+x; return Math.abs(r)<1e-9? 0 : (r>0? 1 : -1); }).reduce((a,b)=>a+b,0)/halves.length;
+  return s===1? "hit" : s===-1? "miss" : s===0? "void" : (s>0? "half_hit" : "half_miss"); }
+// Oran servisindeki spreads -> Pinnacle ile AYNI cizgideki en iyi teklif (borsa haric). Kenar = oran * Pinnacle adil - 1.
+export function ahBest(ev,exch=/betfair_ex|matchbook/){ let pin=null; const offers=[];
+  for(const b of (ev.bookmakers||[])){ const m=(b.markets||[]).find((x)=>x.key==="spreads"); if(!m) continue;
+    const h=m.outcomes.find((o)=>o.name===ev.home_team), a=m.outcomes.find((o)=>o.name===ev.away_team);
+    if(!h||!a||h.point==null||!(h.price>1&&a.price>1)) continue;
+    if(b.key==="pinnacle") pin={ L:h.point, f:shinDevig([1/h.price,1/a.price]) };
+    else if(!exch.test(b.key||"")) offers.push({ L:h.point, ph:h.price, pa:a.price, book:b.title||b.key }); }
+  if(!pin) return null; let best=null; const fmt=(x)=>(x>0?"+":"")+(+x.toFixed(2));
+  for(const o of offers){ if(Math.abs(o.L-pin.L)>1e-9) continue;
+    for(const [side,price,p] of [["1",o.ph,pin.f[0]],["2",o.pa,pin.f[1]]]){ const e=price*p-1;
+      if(!best||e>best.e) best={ code:"AH"+side+"@"+fmt(side==="1"? pin.L : -pin.L), price, book:o.book, p, e }; } }
+  return best; }

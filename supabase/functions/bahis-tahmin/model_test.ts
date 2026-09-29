@@ -2,6 +2,7 @@
 // Calistir: npx deno test supabase/functions/bahis-tahmin/model_test.ts
 import { assert, assertEquals, assertAlmostEquals } from "jsr:@std/assert@1";
 import { probs, probsLite, shinDevig, median, norm, findKey, findPair, evalMkt, extraPick, dutchPrice, dnbPrice } from "./model.ts";
+import { ahResult, ahBest } from "./model.ts";
 import { basketElo, eloPredict, ELO_MEAN } from "./model.ts";
 import { Phi, overWP, fitMu, sideWP, lineResult } from "./model.ts";
 
@@ -117,4 +118,15 @@ Deno.test("basketbol Elo", () => {
   const q=eloPredict({R:{},N:{}},"X","Y",60); assertEquals(q.margin,2.1); assertEquals(q.games,0);
   // yeni sezonda ortalamaya %25 donus
   const m2=basketElo([...g,{ t:Date.UTC(2027,9,1), home:"C", away:"D", hs:80, as:79 }],60); assert(m2.R["A"]<m.R["A"] && m2.R["A"]>ELO_MEAN);
+});
+
+Deno.test("Asya handikabi", () => {
+  assertEquals(ahResult("AH1@-0.5",1,0),"hit"); assertEquals(ahResult("AH1@-0.5",1,1),"miss"); assertEquals(ahResult("AH1@-1",2,1),"void");
+  assertEquals(ahResult("AH1@-0.75",2,1),"half_hit"); assertEquals(ahResult("AH1@-0.25",1,1),"half_miss"); assertEquals(ahResult("AH2@+0.25",1,1),"half_hit");
+  assertEquals(ahResult("AH2@+1.5",2,1),"hit"); assertEquals(ahResult("AH2@-0.5",0,1),"hit"); assertEquals(ahResult("H1@-5.5",90,80),null);
+  const ev={ home_team:"A", away_team:"B", bookmakers:[
+    { key:"pinnacle", markets:[{ key:"spreads", outcomes:[{name:"A",point:-0.5,price:1.95},{name:"B",point:0.5,price:1.95}] }] },
+    { key:"x", title:"X", markets:[{ key:"spreads", outcomes:[{name:"A",point:-0.5,price:2.10},{name:"B",point:0.5,price:1.75}] }] },
+    { key:"y", title:"Y", markets:[{ key:"spreads", outcomes:[{name:"A",point:-0.75,price:2.60},{name:"B",point:0.75,price:1.50}] }] } ] };
+  const b=ahBest(ev); assertEquals(b.code,"AH1@-0.5"); assertEquals(b.book,"X"); assert(Math.abs(b.e-0.05)<1e-6); // farkli cizgi (Y) yok sayilir
 });
