@@ -135,7 +135,7 @@ aside::-webkit-scrollbar{display:none;width:0;height:0}
 </select>
 </div>
 <div class="disc" data-i18n="disc"></div>
-<div class="nav"><button class="tab on" id="tabMain" onclick="showView('main')" data-i18n="navMain"></button><button class="tab" id="tabHist" onclick="showView('history')" data-i18n="navHist"></button></div>
+<div class="nav"><button class="tab on" id="tabMain" onclick="showView('main')" data-i18n="navMain"></button><button class="tab" id="tabHist" onclick="showView('history')" data-i18n="navHist"></button><button class="tab" id="authBtn" style="margin-left:auto"></button></div>
 </div></header>
 <div class="wrap" id="viewMain"><main>
 <div class="bar">
@@ -254,7 +254,39 @@ let modeMax=2;try{const v=parseFloat(localStorage.getItem('mode'));if(v===2||v==
 function inMode(odds){return odds>1&&odds<=modeMax+1e-9;}
 function onMode(){modeMax=parseFloat(document.getElementById('mode').value)||2;try{localStorage.setItem('mode',String(modeMax));}catch(e){}render();acIndex=0;renderAutoCoupons();renderHistory(lastHistRows);}
 function stakeVal(){const v=parseFloat(document.getElementById('stake').value);return v>0?v:100;}
-async function auto(){const s=document.getElementById('sport').value;msg(t('msgAnalyzing'));try{const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fixtures',sport:s})});const d=await r.json();if(d.error){msg('⚠️ '+d.error);return;}lastParamsVersion=d.params_version||null;lastEdgeThresholdPct=d.edge_threshold_pct||5;if(typeof d.rho==='number')serverRho=d.rho;applyStatic();matches=(d.matches||[]).map(mapMatch);couponPool[s]={t:Date.now(),list:matches};let mw=(lang==='en'?' matches':lang==='de'?' Spiele':lang==='ar'?' مباراة':' maç');let note=d.form_count?(d.form_count+'/'+d.count+(lang==='tr'?' maç form verisiyle':lang==='en'?' matches with form data':lang==='de'?' Spiele mit Formdaten':' مباراة ببيانات الأداء')):t('msgNoForm');msg(d.count+mw+' · '+note+' · v'+lastParamsVersion+' · edge≥'+lastEdgeThresholdPct+'%');render();acIndex=0;renderAutoCoupons();refreshPool(s);const hs=document.getElementById('histSport');if(hs)hs.value=s;refreshHistory(s);}catch(e){msg(t('msgError')+e);}}
+// ---- Üyelik (2026-09-29): güncel tahmin/oranlar yalnız onaylı üyelere; üye olmayanlar yalnız sonuçlanmış geçmişi görür ----
+let member=null,authTs=0;
+function SESS(){try{return localStorage.getItem('bf_sess')||'';}catch(e){return '';}}
+function setSess(t){try{if(t)localStorage.setItem('bf_sess',t);else localStorage.removeItem('bf_sess');}catch(e){}}
+function hdr(){const h={'Content-Type':'application/json'};const s=SESS();if(s)h['x-session']=s;return h;}
+async function api(body){const r=await fetch(API,{method:'POST',headers:hdr(),body:JSON.stringify(body)});let d={};try{d=await r.json();}catch(e){}return d;}
+function authBtnRender(){const b=document.getElementById('authBtn');if(!b)return;b.textContent=member?('👤 '+member.email+' · Çıkış'):'🔑 Giriş / Üye ol';b.onclick=member?logout:()=>openAuth('login');}
+function lockedHtml(tg){const st=member&&member.status;
+ const head=st==='pending'?'⏳ Üyeliğin onay bekliyor':'🔒 Güncel tahminler yalnızca üyelere açık';
+ const body=st==='pending'?(member.phone_verified?'Telefonun doğrulandı. Onaylandığında Telegram\'dan haber vereceğiz.':'Önce telefonunu Telegram\'da doğrula; sonra başvurun onaya düşer.'):'Oranları, değer seçimlerini ve kuponları görmek için üye ol ya da giriş yap. Sonuçlanmış tahminleri <b>Geçmiş Tahminler</b> sekmesinde herkes görebilir.';
+ const btns=st==='pending'?(tg?`<a class="b1" style="display:inline-block;text-decoration:none;padding:10px 16px" href="${esc(tg)}" target="_blank" rel="noopener">📱 Telegram'da doğrula</a>`:''):`<button class="b1" onclick="openAuth('signup')">Üye ol</button> <button class="b2" onclick="openAuth('login')">Giriş yap</button>`;
+ return `<div class="empty" style="padding:36px 12px;text-align:center"><h3 style="margin:0 0 8px">${head}</h3><p style="margin:0 0 14px">${body}</p>${btns} <button class="b2" onclick="showView('history')">Geçmiş Tahminler</button></div>`;}
+function renderLocked(tg){document.getElementById('matches').innerHTML=lockedHtml(tg);document.getElementById('autocoupons').innerHTML=`<div class="empty">${member&&member.status==='pending'?'Onaydan sonra kuponlar burada.':'Kuponlar üyelere açık.'}</div>`;msg('');}
+function openAuth(mode){const m=document.getElementById('authModal');m.style.display='flex';authMode(mode||'login');}
+function closeAuth(){document.getElementById('authModal').style.display='none';}
+function authMode(mode){['login','signup','reset','done'].forEach(k=>{const e=document.getElementById('af_'+k);if(e)e.style.display=k===mode?'block':'none';});document.getElementById('authErr').textContent='';if(mode==='signup')authTs=Date.now();}
+function authErr(t){document.getElementById('authErr').textContent=t||'';}
+async function doLogin(){const d=await api({action:'login',email:val('li_email'),password:val('li_pass')});if(!d.ok)return authErr(d.error||'Giriş yapılamadı.');setSess(d.token);member={email:d.email,status:d.status,phone_verified:d.phone_verified};closeAuth();afterAuth(d.tg_link);}
+async function doSignup(){if(val('su_pass')!==val('su_pass2'))return authErr('Şifreler aynı değil.');
+ const d=await api({action:'signup',email:val('su_email'),phone:val('su_phone'),password:val('su_pass'),kvkk:document.getElementById('su_kvkk').checked,hp:val('su_web'),ts:authTs});
+ if(!d.ok)return authErr(d.error||'Kayıt yapılamadı.');if(!d.token){authMode('done');return;}
+ setSess(d.token);member={email:d.email,status:d.status,phone_verified:false};authMode('done');
+ document.getElementById('af_done_tg').innerHTML=d.tg_link?`<a class="b1" style="display:inline-block;text-decoration:none;padding:10px 16px" href="${esc(d.tg_link)}" target="_blank" rel="noopener">📱 Telegram'da telefonunu doğrula</a>`:'';afterAuth(d.tg_link);}
+async function doReset(){if(val('rs_pass')!==val('rs_pass2'))return authErr('Şifreler aynı değil.');const d=await api({action:'reset_password',token:resetToken,password:val('rs_pass')});if(!d.ok)return authErr(d.error||'Şifre değiştirilemedi.');try{history.replaceState(null,'',location.pathname);}catch(e){}authMode('login');authErr('✅ Şifren değişti, giriş yapabilirsin.');}
+async function logout(){await api({action:'logout'});setSess('');member=null;matches=[];couponPool={};authBtnRender();renderLocked();refreshHistory(document.getElementById('histSport').value);}
+function val(id){const e=document.getElementById(id);return e?e.value.trim():'';}
+function afterAuth(tg){authBtnRender();if(member&&member.status==='approved'){auto();}else renderLocked(tg);refreshHistory(document.getElementById('histSport').value);}
+let resetToken=(location.hash.match(/reset=([0-9a-f]{64})/)||[])[1]||'';
+async function initAuth(){if(resetToken){openAuth('reset');}
+ if(SESS()){const d=await api({action:'me'});member=d.member||null;if(!member)setSess('');authBtnRender();if(member&&member.status==='approved'){auto();return;}renderLocked(d.tg_link);return;}
+ authBtnRender();renderLocked();}
+
+async function auto(){const s=document.getElementById('sport').value;msg(t('msgAnalyzing'));try{const r=await fetch(API,{method:'POST',headers:hdr(),body:JSON.stringify({action:'fixtures',sport:s})});const d=await r.json();if(d.error==='members_only'){member=member&&d.status?{...member,status:d.status}:member;renderLocked();return;}if(d.error){msg('⚠️ '+d.error);return;}lastParamsVersion=d.params_version||null;lastEdgeThresholdPct=d.edge_threshold_pct||5;if(typeof d.rho==='number')serverRho=d.rho;applyStatic();matches=(d.matches||[]).map(mapMatch);couponPool[s]={t:Date.now(),list:matches};let mw=(lang==='en'?' matches':lang==='de'?' Spiele':lang==='ar'?' مباراة':' maç');let note=d.form_count?(d.form_count+'/'+d.count+(lang==='tr'?' maç form verisiyle':lang==='en'?' matches with form data':lang==='de'?' Spiele mit Formdaten':' مباراة ببيانات الأداء')):t('msgNoForm');msg(d.count+mw+' · '+note+' · v'+lastParamsVersion+' · edge≥'+lastEdgeThresholdPct+'%');render();acIndex=0;renderAutoCoupons();refreshPool(s);const hs=document.getElementById('histSport');if(hs)hs.value=s;refreshHistory(s);}catch(e){msg(t('msgError')+e);}}
 // v10.5: tahmin kaydi ve settle artik YALNIZ sunucu cron'larinda (autosave / settle-daily).
 // Eski surum her sayfa acilisinda save+settle cagiriyordu: favori secimler de "tahmin" olarak yaziliyor,
 // settle her ziyarette Odds API kredisi yakiyordu.
@@ -264,7 +296,7 @@ const mapMatch=m=>m.live?({id:uid++,auto:true,live:true,home:m.home,away:m.away,
 function allSports(){return Array.from(document.querySelectorAll('#sport option')).map(o=>o.value);}
 function lgName(sp){const o=document.querySelector(`#sport option[value="${sp}"]`);return o?o.textContent:sp;}
 function poolMatches(){const ents=Object.entries(couponPool);const src=ents.length?ents.flatMap(([sp,e])=>e.list.map(m=>({m,sp}))):matches.map(m=>({m,sp:document.getElementById('sport').value}));return src.filter(({m})=>m.auto&&!m.live&&m.srv);}
-async function refreshPool(cur){const need=allSports().filter(sp=>sp!==cur&&!(couponPool[sp]&&Date.now()-couponPool[sp].t<POOL_TTL));await Promise.all(need.map(async sp=>{try{const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'fixtures',sport:sp})});const d=await r.json();if(!d.error)couponPool[sp]={t:Date.now(),list:(d.matches||[]).map(mapMatch)};}catch(e){}}));if(need.length)renderAutoCoupons();}
+async function refreshPool(cur){const need=allSports().filter(sp=>sp!==cur&&!(couponPool[sp]&&Date.now()-couponPool[sp].t<POOL_TTL));await Promise.all(need.map(async sp=>{try{const r=await fetch(API,{method:'POST',headers:hdr(),body:JSON.stringify({action:'fixtures',sport:sp})});const d=await r.json();if(!d.error)couponPool[sp]={t:Date.now(),list:(d.matches||[]).map(mapMatch)};}catch(e){}}));if(need.length)renderAutoCoupons();}
 function onSport(){auto();} // v8.1: switching sport re-fetches matches (auto() also settles + refreshes history)
 function addMatch(){matches.push({id:uid++,auto:false,home:'',away:'',lh:1.3,la:1.1,mkt:{},odds:{}});render();}
 function del(id){matches=matches.filter(m=>m.id!=id);render();renderAutoCoupons();}
@@ -324,7 +356,7 @@ function renderAutoCoupons(){const el=document.getElementById('autocoupons');con
 function acMove(d){acIndex=(acIndex+d+3)%3;const tr=document.getElementById('ctrack');if(tr)tr.style.transform='translateX(-'+acIndex*100+'%)';document.querySelectorAll('.cdot').forEach((x,i)=>x.classList.toggle('on',i===acIndex));}
 function acSet(i){acIndex=i;acMove(0);}
 // ---- Geçmiş / kayıt ----
-async function refreshHistory(sport){const sp=sport?sport:null;try{const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'history',sport:sp})});const d=await r.json();renderHistory(d.rows||[]);}catch(e){renderHistory([]);}}
+async function refreshHistory(sport){const sp=sport?sport:null;try{const r=await fetch(API,{method:'POST',headers:hdr(),body:JSON.stringify({action:'history',sport:sp})});const d=await r.json();renderHistory(d.rows||[]);}catch(e){renderHistory([]);}}
 let lastHistRows=[];
 // ---- Performans (2026-09-27): lig ve pazar kirilimi (isabet, duz ROI, CLV, en buyuk dusus) + kalibrasyon (tahmin vs gerceklesen, Brier) ----
 const FAMN={'ah':'Asya handikabı','1x2':'Maç sonucu','ou':'Alt/Üst','btts':'KG','extra':'Ek (ÇŞ/Bİ/Ü1,5/A3,5)','hcp':'Handikap'};
@@ -362,7 +394,26 @@ renderAutoCoupons();
 // v8.1: every page open auto-loads matches AND settles finished games (auto() chains:
 // fixtures -> savePicks -> settle -> history refresh). Returning to the tab after >60s
 // re-runs the same refresh so scores/results stay current without a manual click.
-auto();
+initAuth();
 let lastAutoRefresh=Date.now();
-document.addEventListener('visibilitychange',()=>{ if(!document.hidden && Date.now()-lastAutoRefresh>60000){ lastAutoRefresh=Date.now(); auto(); } });
-</script></body></html>
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden && member&&member.status==='approved' && Date.now()-lastAutoRefresh>60000){ lastAutoRefresh=Date.now(); auto(); } });
+</script>
+<div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)closeAuth()">
+<div style="background:var(--card,#fff);color:inherit;border-radius:14px;max-width:400px;width:100%;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.25);max-height:92vh;overflow:auto">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>BetFans üyelik</b><button class="b2 bm" onclick="closeAuth()">✕</button></div>
+<div id="af_login"><label class="f">E-posta</label><input id="li_email" type="email" autocomplete="username"><label class="f">Şifre</label><input id="li_pass" type="password" autocomplete="current-password">
+<button class="b1" style="width:100%;margin-top:12px" onclick="doLogin()">Giriş yap</button>
+<p style="font-size:13px;margin:10px 0 0">Hesabın yok mu? <a href="#" onclick="authMode('signup');return false">Üye ol</a> · Şifreni mi unuttun? Telegram'da BetFans botuna <b>/sifre</b> yaz.</p></div>
+<div id="af_signup" style="display:none"><label class="f">E-posta</label><input id="su_email" type="email" autocomplete="email">
+<label class="f">Cep telefonu</label><input id="su_phone" type="tel" autocomplete="tel" placeholder="0532 123 45 67">
+<label class="f">Şifre (en az 8 karakter)</label><input id="su_pass" type="password" autocomplete="new-password"><label class="f">Şifre tekrar</label><input id="su_pass2" type="password" autocomplete="new-password">
+<input id="su_web" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
+<label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;margin-top:10px"><input id="su_kvkk" type="checkbox" style="width:auto;margin-top:2px"><span>18 yaşından büyüğüm. E-posta ve telefon numaram yalnızca üyelik doğrulaması ve hesap güvenliği için işlenir, üçüncü kişilerle paylaşılmaz; istediğimde silinmesini talep edebilirim (KVKK aydınlatma).</span></label>
+<button class="b1" style="width:100%;margin-top:12px" onclick="doSignup()">Üye ol</button>
+<p style="font-size:13px;margin:10px 0 0">Üyelikler yönetici onayıyla açılır. Kayıttan sonra telefonunu Telegram'da doğrulaman istenir. <a href="#" onclick="authMode('login');return false">Giriş yap</a></p></div>
+<div id="af_reset" style="display:none"><label class="f">Yeni şifre</label><input id="rs_pass" type="password" autocomplete="new-password"><label class="f">Yeni şifre tekrar</label><input id="rs_pass2" type="password" autocomplete="new-password">
+<button class="b1" style="width:100%;margin-top:12px" onclick="doReset()">Şifreyi değiştir</button></div>
+<div id="af_done" style="display:none"><p><b>Kaydın alındı.</b> Telefonunu doğrula; yönetici onayından sonra güncel tahminler açılır ve Telegram'dan haber verilir.</p><div id="af_done_tg"></div></div>
+<div id="authErr" style="color:#dc2626;font-size:13px;margin-top:10px;min-height:1em"></div>
+</div></div>
+</body></html>

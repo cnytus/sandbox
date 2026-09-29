@@ -10,13 +10,14 @@
 //      P4 CLV-driven calibration; P5 team home advantage; P6 draw breakdown; P7 exposure cap.
 // v9.x) CSV source (T1 + SoT blend); DC ratings; rest; steam. v8.x/v7 in git history.
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { hashPassword, verifyPassword, randomToken, sha256hex, hmacHex, safeEq, validEmail, normPhone, validPassword } from "./auth.ts";
 import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick, fitMu, sideWP, lineResult, lineQuotes, parseLine, bestLineRaw, basketElo, eloPredict, ahResult, ahBest } from "./model.ts";
 
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.14";
-const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
+const VERSION="10.15";
+const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
 const ODDS_KEY=Deno.env.get("ODDS_API_KEY")||"";
@@ -1095,8 +1096,97 @@ async function autosave(){
   return { total_saved:total, detail, telegram, results };
 }
 
+// ---- Uyelik (2026-09-29) ----
+// Kayit (e-posta + telefon + sifre) -> 'pending'. Telefon BetFans Telegram botunda "numarami paylas" ile dogrulanir; sonra yoneticiye
+// onay/ret baglantili bildirim gider (JW'nin bildirim botu, yonetici sohbeti). Oranlari/tahminleri yalniz 'approved' uyeler gorur;
+// digerleri yalniz sonuclanmis gecmis tahminleri. Bot korumasi: bal kupu alani, form doldurma suresi, IP/e-posta/genel hiz siniri.
+// Bot ayarlari bahis_tahmin.settings: betfans_bot_token, betfans_bot_username, betfans_bot_secret (yoksa telefon dogrulamasi atlanir,
+// yonetici bildirimi kayitta gider).
+const FN_URL="https://wrmyxcittludopbjyits.supabase.co/functions/v1/bahis-tahmin";
+const clientIp=(req)=>(req.headers.get("x-forwarded-for")||"").split(",")[0].trim()||"?";
+async function allow(key,windowS,mx){ try{ const {data,error}=await sb().rpc("bahis_auth_allow",{k:key,window_s:windowS,mx}); if(error) throw error; return !!data; }catch(e){ warn("allow",e); return false; } }
+async function sessionMember(req){ const t=req.headers.get("x-session"); if(!t||t.length!==64) return null;
+  try{ const {data}=await sb().rpc("bahis_session_member",{th:await sha256hex(t)}); return (data&&data[0])||null; }catch(e){ warn("session",e); return null; } }
+async function newSession(memberId){ const t=randomToken(); await sb().rpc("bahis_session_create",{th:await sha256hex(t),i:memberId,days:30}); return t; }
+async function botCfg(){ const [token,username,secret]=await Promise.all(["betfans_bot_token","betfans_bot_username","betfans_bot_secret"].map(getSetting)); return token&&username? { token, username, secret } : null; }
+async function botSend(bot,chat,text,extra={}){ try{ await fetch(`https://api.telegram.org/bot${bot.token}/sendMessage`,{ method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ chat_id:chat, text, disable_web_page_preview:true, ...extra }) }); }catch(e){ warn("botSend",e); } }
+async function tgLink(memberId){ const bot=await botCfg(); if(!bot) return null; const t=randomToken();
+  await sb().rpc("bahis_token_create",{th:await sha256hex(t),i:memberId,k:"tg_link",minutes:2880}); return `https://t.me/${bot.username}?start=${t}`; }
+async function approveUrl(id,act){ return `${FN_URL}?action=member&id=${id}&act=${act}&s=${await hmacHex(ADMIN_KEY,id+":"+act)}`; }
+async function notifyAdminSignup(m){ const ok=m.phone_verified? "✅ Telegram'da doğrulandı" : "⚠️ doğrulanmadı";
+  await sendTelegram(`🆕 BetFans üyelik başvurusu\n${m.email}\n📱 ${m.phone} (${ok})\n\n✅ Onayla: ${await approveUrl(m.id,"approved")}\n\n❌ Reddet: ${await approveUrl(m.id,"rejected")}`); }
+const escH=(s)=>String(s).replace(/[&<>"]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const html=(t,b)=>new Response(`<!doctype html><html lang="tr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escH(t)}</title><body style="font-family:system-ui;padding:32px;max-width:520px;margin:auto"><h2>${escH(t)}</h2><p>${escH(b)}</p><p><a href="https://bet-fans.com">bet-fans.com</a></p></body></html>`,{ headers:{"Content-Type":"text/html; charset=utf-8"} });
+
+async function signup(req,b){ const ip=clientIp(req);
+  if(b.hp) return J({ ok:true, status:"pending" }); // bal kupu: bota basari gibi gorun
+  const age=Date.now()-(+b.ts||0); if(!(age>3000&&age<7200000)) return J({ error:"Form çok hızlı gönderildi; lütfen tekrar dene." },400);
+  if(!b.kvkk) return J({ error:"Aydınlatma metnini onaylaman gerekiyor." },400);
+  const email=String(b.email||"").trim().toLowerCase(), phone=normPhone(b.phone);
+  if(!validEmail(email)) return J({ error:"Geçerli bir e-posta gir." },400);
+  if(!phone) return J({ error:"Geçerli bir cep telefonu gir (ör. 0532 123 45 67)." },400);
+  if(!validPassword(b.password)) return J({ error:"Şifre en az 8 karakter olmalı." },400);
+  if(!(await allow("su:"+ip,3600,3)&&await allow("sud:"+ip,86400,8)&&await allow("su:all",86400,60))) return J({ error:"Çok fazla kayıt denemesi; daha sonra tekrar dene." },429);
+  const {data:id,error}=await sb().rpc("bahis_member_create",{e:email,ph:phone,h:await hashPassword(String(b.password)),ip}); if(error) return J({ error:"Kayıt yapılamadı." },500);
+  if(!id) return J({ error:"Bu e-posta ile kayıt var; giriş yap." },409);
+  const link=await tgLink(id); if(!link) await notifyAdminSignup({ id, email, phone, phone_verified:false });
+  return J({ ok:true, token:await newSession(id), email, status:"pending", phone_verified:false, tg_link:link }); }
+
+async function login(req,b){ const ip=clientIp(req), email=String(b.email||"").trim().toLowerCase();
+  if(!(await allow("li:"+ip,900,15)&&await allow("le:"+email,900,6))) return J({ error:"Çok fazla deneme; 15 dakika sonra tekrar dene." },429);
+  const {data}=await sb().rpc("bahis_member_get",{e:email}); const m=data&&data[0];
+  if(!m||!(await verifyPassword(String(b.password||""),m.pass_hash))) return J({ error:"E-posta veya şifre hatalı." },401);
+  if(m.status==="rejected"||m.status==="disabled") return J({ error:"Bu üyelik aktif değil." },403);
+  await sb().rpc("bahis_member_update",{i:m.id,p:{login:true}});
+  return J({ ok:true, token:await newSession(m.id), email:m.email, status:m.status, phone_verified:m.phone_verified, tg_link: m.phone_verified? null : await tgLink(m.id) }); }
+
+async function me(req){ const m=await sessionMember(req); if(!m) return J({ member:null });
+  return J({ member:{ email:m.email, status:m.status, phone_verified:m.phone_verified }, tg_link: m.status==="pending"&&!m.phone_verified? await tgLink(m.id) : null }); }
+
+async function resetPassword(req,b){ if(!(await allow("rp:"+clientIp(req),3600,10))) return J({ error:"Çok fazla deneme." },429);
+  if(!validPassword(b.password)) return J({ error:"Şifre en az 8 karakter olmalı." },400);
+  const {data:id}=await sb().rpc("bahis_token_consume",{th:await sha256hex(String(b.token||"")),k:"reset"}); if(!id) return J({ error:"Bağlantı geçersiz ya da süresi dolmuş." },400);
+  await sb().rpc("bahis_member_update",{i:id,p:{pass_hash:await hashPassword(String(b.password))}}); return J({ ok:true }); }
+
+// Yonetici onay/ret baglantisi (Telegram mesajindan, GET, HMAC imzali)
+async function memberDecision(u){ const id=u.searchParams.get("id")||"", act=u.searchParams.get("act")||"", s=u.searchParams.get("s")||"";
+  if(!ADMIN_KEY||!["approved","rejected"].includes(act)||!safeEq(s,await hmacHex(ADMIN_KEY,id+":"+act))) return html("Geçersiz bağlantı","İmza doğrulanamadı.");
+  const {data}=await sb().rpc("bahis_member_by_id",{i:id}); const m=data&&data[0]; if(!m) return html("Bulunamadı","Üye kaydı yok.");
+  await sb().rpc("bahis_member_update",{i:id,p:{status:act}});
+  const bot=await botCfg(); if(bot&&m.tg_chat_id) await botSend(bot,m.tg_chat_id, act==="approved"? "✅ BetFans üyeliğin onaylandı. Tahminler: https://bet-fans.com" : "BetFans üyelik başvurun onaylanmadı.");
+  return html(act==="approved"? "Onaylandı ✅" : "Reddedildi", `${m.email} · ${m.phone}${m.phone_verified?" (Telegram doğrulamalı)":""}`); }
+
+// BetFans Telegram botu webhook'u: /start <jeton> -> hesabi bagla, numara iste; kisi paylasimi -> telefon dogrulandi; /sifre -> sifirlama baglantisi
+async function tgWebhook(req){ const bot=await botCfg(); if(!bot||!bot.secret||!safeEq(req.headers.get("x-telegram-bot-api-secret-token"),bot.secret)) return new Response("no",{status:401});
+  let up={}; try{ up=await req.json(); }catch(_){ return new Response("ok"); }
+  const msg=up.message; if(!msg||!msg.chat||msg.chat.type!=="private") return new Response("ok"); const chat=msg.chat.id, text=String(msg.text||"").trim();
+  const shareKb={ reply_markup:{ keyboard:[[{ text:"📱 Numaramı paylaş", request_contact:true }]], one_time_keyboard:true, resize_keyboard:true } };
+  if(text.startsWith("/start")){ const tok=text.split(/\s+/)[1];
+    if(tok){ const {data:id}=await sb().rpc("bahis_token_consume",{th:await sha256hex(tok),k:"tg_link"});
+      if(!id){ await botSend(bot,chat,"Bağlantının süresi dolmuş. bet-fans.com'da giriş yapıp yeni bağlantı al."); return new Response("ok"); }
+      await sb().rpc("bahis_member_update",{i:id,p:{tg_chat_id:chat}});
+      await botSend(bot,chat,"Merhaba! Telefon numaranı doğrulamak için aşağıdaki düğmeye bas.",shareKb); }
+    else await botSend(bot,chat,"BetFans botu: üyelik doğrulama, şifre sıfırlama (/sifre) ve bildirimler. Kayıt: https://bet-fans.com");
+    return new Response("ok"); }
+  const {data:mm}=await sb().rpc("bahis_member_by_chat",{c:chat}); const m=mm&&mm[0];
+  if(msg.contact){ if(!m){ await botSend(bot,chat,"Önce bet-fans.com'dan kayıt ol ve oradaki Telegram bağlantısını kullan."); return new Response("ok"); }
+    if(msg.contact.user_id!==msg.from.id){ await botSend(bot,chat,"Lütfen kendi numaranı paylaş.",shareKb); return new Response("ok"); }
+    const ph=normPhone("+"+String(msg.contact.phone_number).replace(/^\+/,"")); if(!ph){ await botSend(bot,chat,"Numara okunamadı."); return new Response("ok"); }
+    const first=!m.phone_verified; await sb().rpc("bahis_member_update",{i:m.id,p:{phone:ph,phone_verified:true}});
+    await botSend(bot,chat, m.status==="approved"? "✅ Numaran doğrulandı." : "✅ Numaran doğrulandı. Üyeliğin onaylanınca buradan haber vereceğim.",{ reply_markup:{ remove_keyboard:true } });
+    if(first&&m.status==="pending") await notifyAdminSignup({ ...m, phone:ph, phone_verified:true });
+    return new Response("ok"); }
+  if(text.startsWith("/sifre")){ if(!m){ await botSend(bot,chat,"Bu Telegram hesabı bir BetFans üyeliğine bağlı değil."); return new Response("ok"); }
+    const t=randomToken(); await sb().rpc("bahis_token_create",{th:await sha256hex(t),i:m.id,k:"reset",minutes:30});
+    await botSend(bot,chat,`Şifreni sıfırlamak için (30 dk geçerli):\nhttps://bet-fans.com/#reset=${t}`); return new Response("ok"); }
+  await botSend(bot,chat,"Komutlar: /sifre — şifre sıfırlama bağlantısı. Site: https://bet-fans.com"); return new Response("ok"); }
+
 Deno.serve(async (req)=>{
   if(req.method==="OPTIONS") return new Response("ok",{headers:CORS});
+  const u0=new URL(req.url);
+  if(req.method==="GET"&&u0.searchParams.get("action")==="member") return await memberDecision(u0);
+  if(req.method==="POST"&&u0.searchParams.get("tg")==="1") return await tgWebhook(req);
   if(req.method==="GET"){ let health=null; try{ const {data}=await sb().rpc("bahis_health"); health=data; }catch(e){ warn("bahis_health",e); }
     return J({ ok:MISSING_ENV.length===0, service:`bahis-tahmin API v${VERSION}`, missing_env:MISSING_ENV.length? MISSING_ENV : undefined, env:ENV_PRESENT, health }); }
   if(req.method==="POST"){ let body={}; try{ body=await req.json(); }catch{ return J({error:"geçersiz JSON"},400); }
@@ -1105,9 +1195,18 @@ Deno.serve(async (req)=>{
       if(!ADMIN_KEY) return J({ error:"BAHIS_ADMIN_KEY secret'i tanimli degil; admin action kapali" },503);
       if(req.headers.get("x-admin-key")!==ADMIN_KEY) return J({ error:"yetkisiz" },401);
     }
-    if(body.action==="fixtures") return J(await fetchFixtures(body.sport||WORLD_CUP_SPORT,true)); // herkese acik: kredi korumasi
+    if(body.action==="signup") return await signup(req,body);
+    if(body.action==="login") return await login(req,body);
+    if(body.action==="me") return await me(req);
+    if(body.action==="logout"){ const t=req.headers.get("x-session"); if(t) await sb().rpc("bahis_session_delete",{th:await sha256hex(t)}); return J({ ok:true }); }
+    if(body.action==="reset_password") return await resetPassword(req,body);
+    if(body.action==="fixtures"){ // yalniz onayli uyeler (kredi korumasi da burada)
+      const m=await sessionMember(req); if(!m||m.status!=="approved") return J({ error:"members_only", status:m?m.status:null },401);
+      return J(await fetchFixtures(body.sport||WORLD_CUP_SPORT,true)); }
     if(body.action==="save") return J(await savePreds(body.picks||[]));
-    if(body.action==="history") return J(await getHistory(body.sport));
+    if(body.action==="history"){ // uye olmayanlar yalniz sonuclanmis tahminleri gorur (bekleyen = guncel secim)
+      const h=await getHistory(body.sport); const m=await sessionMember(req);
+      if((!m||m.status!=="approved")&&h.rows) h.rows=h.rows.filter((r)=>r.result!=null); return J(h); }
     if(body.action==="settle") return J(await settle());
     if(body.action==="autosave") return J(await autosave());
     if(body.action==="collect_results") return J(await collectResults());
