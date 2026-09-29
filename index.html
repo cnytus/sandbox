@@ -260,7 +260,7 @@ function SESS(){try{return localStorage.getItem('bf_sess')||'';}catch(e){return 
 function setSess(t){try{if(t)localStorage.setItem('bf_sess',t);else localStorage.removeItem('bf_sess');}catch(e){}}
 function hdr(){const h={'Content-Type':'application/json'};const s=SESS();if(s)h['x-session']=s;return h;}
 async function api(body){const r=await fetch(API,{method:'POST',headers:hdr(),body:JSON.stringify(body)});let d={};try{d=await r.json();}catch(e){}return d;}
-function authBtnRender(){const b=document.getElementById('authBtn');if(!b)return;b.textContent=member?('👤 '+member.email+' · Çıkış'):'🔑 Giriş / Üye ol';b.onclick=member?logout:()=>openAuth('login');}
+function authBtnRender(){const b=document.getElementById('authBtn');if(!b)return;b.textContent=member?('👤 '+member.email+' · Çıkış'):'🔑 Üye ol / Giriş';b.onclick=member?logout:()=>openAuth('signup');}
 function lockedHtml(tg){const st=member&&member.status;
  const head=st==='pending'?'⏳ Üyeliğin onay bekliyor':'🔒 Güncel tahminler yalnızca üyelere açık';
  const body=st==='pending'?(member.phone_verified?'Telefonun doğrulandı. Onaylandığında Telegram\'dan haber vereceğiz.':'Önce telefonunu Telegram\'da doğrula; sonra başvurun onaya düşer.'):'Oranları, değer seçimlerini ve kuponları görmek için üye ol ya da giriş yap. Sonuçlanmış tahminleri <b>Geçmiş Tahminler</b> sekmesinde herkes görebilir.';
@@ -269,7 +269,7 @@ function lockedHtml(tg){const st=member&&member.status;
 function renderLocked(tg){document.getElementById('matches').innerHTML=lockedHtml(tg);document.getElementById('autocoupons').innerHTML=`<div class="empty">${member&&member.status==='pending'?'Onaydan sonra kuponlar burada.':'Kuponlar üyelere açık.'}</div>`;msg('');}
 function openAuth(mode){const m=document.getElementById('authModal');m.style.display='flex';authMode(mode||'login');}
 function closeAuth(){document.getElementById('authModal').style.display='none';}
-function authMode(mode){['login','signup','reset','done'].forEach(k=>{const e=document.getElementById('af_'+k);if(e)e.style.display=k===mode?'block':'none';});document.getElementById('authErr').textContent='';if(mode==='signup')authTs=Date.now();}
+function authMode(mode){['login','signup','reset','done'].forEach(k=>{const e=document.getElementById('af_'+k);if(e)e.style.display=k===mode?'block':'none';});['signup','login'].forEach(k=>{const b=document.getElementById('at_'+k);if(b){b.className=k===mode?'b1':'b2';b.style.display=(mode==='reset'||mode==='done')?'none':'';}});document.getElementById('authErr').textContent='';if(mode==='signup')authTs=Date.now();}
 function authErr(t){document.getElementById('authErr').textContent=t||'';}
 async function doLogin(){const d=await api({action:'login',email:val('li_email'),password:val('li_pass')});if(!d.ok)return authErr(d.error||'Giriş yapılamadı.');setSess(d.token);member={email:d.email,status:d.status,phone_verified:d.phone_verified};closeAuth();afterAuth(d.tg_link);}
 async function doSignup(){if(val('su_pass')!==val('su_pass2'))return authErr('Şifreler aynı değil.');
@@ -401,6 +401,7 @@ document.addEventListener('visibilitychange',()=>{ if(!document.hidden && member
 <div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)closeAuth()">
 <div style="background:var(--card,#fff);color:inherit;border-radius:14px;max-width:400px;width:100%;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.25);max-height:92vh;overflow:auto">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>BetFans üyelik</b><button class="b2 bm" onclick="closeAuth()">✕</button></div>
+<div id="authTabs" style="display:flex;gap:6px;margin-bottom:12px"><button class="b1" id="at_signup" style="flex:1" onclick="authMode('signup')">Üye ol</button><button class="b2" id="at_login" style="flex:1" onclick="authMode('login')">Giriş yap</button></div>
 <div id="af_login"><label class="f">E-posta</label><input id="li_email" type="email" autocomplete="username"><label class="f">Şifre</label><input id="li_pass" type="password" autocomplete="current-password">
 <button class="b1" style="width:100%;margin-top:12px" onclick="doLogin()">Giriş yap</button>
 <p style="font-size:13px;margin:10px 0 0">Hesabın yok mu? <a href="#" onclick="authMode('signup');return false">Üye ol</a> · Şifreni mi unuttun? Telegram'da BetFans botuna <b>/sifre</b> yaz.</p></div>
