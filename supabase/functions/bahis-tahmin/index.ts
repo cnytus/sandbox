@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.16";
+const VERSION="10.17";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -1129,7 +1129,8 @@ async function signup(req,b){ const ip=clientIp(req);
   if(!validEmail(email)) return J({ error:"Geçerli bir e-posta gir." },400);
   if(!phone) return J({ error:"Geçerli bir cep telefonu gir (ör. 0532 123 45 67)." },400);
   if(!validPassword(b.password)) return J({ error:"Şifre en az 8 karakter olmalı." },400);
-  if(!(await allow("su:"+ip,3600,3)&&await allow("sud:"+ip,86400,8)&&await allow("su:all",86400,60))) return J({ error:"Çok fazla kayıt denemesi; daha sonra tekrar dene." },429);
+  // Kayit hiz siniri: IP saatte 10 / gunde 20 (ayni ag: aile/ofis; 2026-09-29), genel gunde 60
+  if(!(await allow("su:"+ip,3600,10)&&await allow("sud:"+ip,86400,20)&&await allow("su:all",86400,60))) return J({ error:"Çok fazla kayıt denemesi; daha sonra tekrar dene." },429);
   const {data:id,error}=await sb().rpc("bahis_member_create",{e:email,ph:phone,h:await hashPassword(String(b.password)),ip}); if(error) return J({ error:"Kayıt yapılamadı." },500);
   if(!id) return J({ error:"Bu e-posta ile kayıt var; giriş yap." },409);
   const link=await tgLink(id); if(!link) await notifyAdminSignup({ id, email, phone, phone_verified:false });
