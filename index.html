@@ -277,7 +277,14 @@ let qrLib=null;
 function drawQR(link){const els=[...document.querySelectorAll('.tgqr')].filter(e=>!e.dataset.done);if(!els.length)return;
  const go=()=>els.forEach(e=>{e.dataset.done='1';try{new QRCode(e,{text:link,width:160,height:160,correctLevel:QRCode.CorrectLevel.M});}catch(_){e.style.display='none';}});
  if(window.QRCode)return go();if(!qrLib){qrLib=document.createElement('script');qrLib.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';document.head.appendChild(qrLib);}qrLib.addEventListener('load',go);}
-function renderLocked(tg){document.getElementById('matches').innerHTML=lockedHtml(tg);document.getElementById('autocoupons').innerHTML=`<div class="empty">${member&&member.status==='pending'?'Onaydan sonra kuponlar burada.':'Kuponlar üyelere açık.'}</div>`;msg('');}
+// Tanıtım (2026-09-29): üye olmayana ana sayfada son 10 TUTAN tahmin (kullanıcı kararı: özet satırı yok).
+// Tutmayanlar dahil tüm sonuçlar Geçmiş sekmesinde herkese açık; not bunu ve "garanti değildir"i söyler.
+async function loadTeaser(){const el=document.getElementById('teaser');if(!el)return;let rows=[];try{rows=(await api({action:'history'})).rows||[];}catch(e){}
+ const wins=rows.filter(r=>r.result==='hit'||r.result==='half_hit').sort((a,b)=>String(b.commence_time||b.match_date).localeCompare(String(a.commence_time||a.match_date))).slice(0,10);
+ if(!wins.length){el.innerHTML='';return;}
+ const li=wins.map(r=>`<div class="hrow"><span>✅</span><span class="hm">${esc(r.home)} – ${esc(r.away)}<br><small style="opacity:.6">${esc(lgName(r.sport))} · ${r.commence_time?fmtDate(r.commence_time):esc(r.match_date||'')}</small></span><span class="hp">${mkn(r.market)}</span><span class="hpr">${r.odds?(+r.odds).toFixed(2):''}</span><span class="hsc">${esc(r.actual_score||'')}</span></div>`).join('');
+ el.innerHTML=`<div class="hday" style="margin-top:14px"><div class="hday-h">🎯 Son tutan tahminler</div>${li}<p style="font-size:12px;opacity:.7;margin:8px 0 0">Tutmayanlar dahil tüm sonuçlar <a href="#" onclick="showView('history');return false">Geçmiş Tahminler</a> sekmesinde. Geçmiş sonuçlar gelecekteki kazancın garantisi değildir.</p></div>`;}
+function renderLocked(tg){document.getElementById('matches').innerHTML=lockedHtml(tg)+'<div id="teaser"></div>';loadTeaser();document.getElementById('autocoupons').innerHTML=`<div class="empty">${member&&member.status==='pending'?'Onaydan sonra kuponlar burada.':'Kuponlar üyelere açık.'}</div>`;msg('');}
 function openAuth(mode){const m=document.getElementById('authModal');m.style.display='flex';authMode(mode||'login');}
 function closeAuth(){document.getElementById('authModal').style.display='none';}
 function authMode(mode){['login','signup','reset','done'].forEach(k=>{const e=document.getElementById('af_'+k);if(e)e.style.display=k===mode?'block':'none';});['signup','login'].forEach(k=>{const b=document.getElementById('at_'+k);if(b){b.className=k===mode?'b1':'b2';b.style.display=(mode==='reset'||mode==='done')?'none':'';}});document.getElementById('authErr').textContent='';if(mode==='signup')authTs=Date.now();}
