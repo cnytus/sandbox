@@ -10,12 +10,12 @@
 //      P4 CLV-driven calibration; P5 team home advantage; P6 draw breakdown; P7 exposure cap.
 // v9.x) CSV source (T1 + SoT blend); DC ratings; rest; steam. v8.x/v7 in git history.
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick, fitMu, sideWP, lineResult, lineQuotes, parseLine, bestLineRaw, basketElo, eloPredict } from "./model.ts";
+import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick, fitMu, sideWP, lineResult, lineQuotes, parseLine, bestLineRaw, basketElo, eloPredict, ahResult, ahBest } from "./model.ts";
 
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.13";
+const VERSION="10.14";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -24,7 +24,7 @@ const FOOTBALL_API_KEY=Deno.env.get("FOOTBALL_API_KEY")||""; // API-Football (ap
 const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"";
 // Yazan / pahali action'lar (settle, calibrate, backtest, ...) bu header'i ister. pg_cron komutlari da gonderir.
 const ADMIN_KEY=Deno.env.get("BAHIS_ADMIN_KEY")||"";
-const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe","fd_csv","odds_hist","tg_test","collect_results"]);
+const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe","fd_csv","odds_hist","tg_test","collect_results","ah_scan"]);
 // FOOTBALL_DATA_KEY zorunlu degil (CSV birincil form kaynagi; FD yalniz yedek + Dunya Kupasi formu)
 const MISSING_ENV=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","ODDS_API_KEY"].filter((k)=>!Deno.env.get(k));
 // Tani: hangi secret'lar tanimli (degerler asla donmez)
@@ -487,6 +487,24 @@ async function basketModel(sport){ try{ const {data,error}=await sb().rpc("bahis
     const games=(data||[]).map((g)=>({ t:new Date(g.commence_time).getTime(), home:g.home, away:g.away, hs:g.home_score, as:g.away_score }));
     return { m:basketElo(games,BASKET_HCA[sport]??60), n:games.length }; }catch(e){ warn("basketModel",e); return null; } }
 
+// ---- Futbol Asya handikabi (2026-09-29): gunluk tarama (autosave), lig basina spreads = 1 kredi. Yalniz Pinnacle ile AYNI cizgi.
+// Backtest (football-data, 10 lig, 19/20-25/26, %2, Max oran): 1219 bahis ROI +7,0, CLV +2,05; 7 sezonun 6'si, 10 ligin 9'u pozitif.
+// Canli kapsam dar (lig basina 3-5 bahisci) -> backtest'ten az secim beklenir. Sonuc "ah:<lig>" onbellegine (kart/kupon) + autosave kaydi.
+const AH_PE_MIN=2;
+async function ahScan(){ const all=[], out={};
+  for(const sp of Object.keys(CSV_COMP)){ try{
+    const r=await fetch(`https://api.the-odds-api.com/v4/sports/${sp}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=spreads&oddsFormat=decimal`);
+    if(!r.ok){ out[sp]=`HTTP ${r.status}`; continue; }
+    const now=Date.now(), map={}; let n=0;
+    for(const ev of ((await r.json())||[])){ if(!(new Date(ev.commence_time).getTime()>now)) continue;
+      const b=ahBest(ev,EXCHANGE_KEYS); if(!b) continue; const pe=+(b.e*100).toFixed(2);
+      if(!(pe>=AH_PE_MIN&&pe<=PIN_EDGE_MAX_PCT&&b.price<=PIN_MAX_ODDS)) continue;
+      const pick={ code:b.code, odds:b.price, book:b.book, prob:+(b.p*100).toFixed(1), fair_odds:+(1/b.p).toFixed(3), pin_edge:pe, t:now };
+      map[norm(ev.home_team)+"|"+norm(ev.away_team)]=pick; n++; all.push({ sport:sp, home:ev.home_team, away:ev.away_team, commence:ev.commence_time, pick }); }
+    await sb().rpc("bahis_set_odds_cache",{sp:"ah:"+sp,p:map}); out[sp]=n;
+  }catch(e){ warn(`ahScan ${sp}`,e); out[sp]=String(e); } }
+  return { out, all }; }
+
 async function fetchBasket(sport,pub=false){
   const oe=await fetchOddsEvents(sport,pub);
   if(oe.error) return { error:`Oran API hatası (${oe.error}).` };
@@ -587,6 +605,8 @@ async function fetchFixtures(sport,pub=false){
   const pk=out.filter(m=>m.pick&&m.pick.kelly_pct);
   const totK=pk.reduce((s,m)=>s+m.pick.kelly_pct,0);
   if(totK>15) for(const m of pk) m.pick.kelly_pct=+(m.pick.kelly_pct*15/totK).toFixed(1);
+  try{ const {data:ahm}=await sb().rpc("bahis_get_odds_cache",{sp:"ah:"+sport,max_age_seconds:36*3600}); // gunluk Asya handikabi taramasi
+    if(ahm&&typeof ahm==="object") for(const m of out){ const x=!m.live&&ahm[norm(m.home)+"|"+norm(m.away)]; if(x) m.ahpick=x; } }catch(e){ warn("ah cache",e); }
   return { matches:out, count:out.length, form_count:formCount, params_version:params.version, rho:params.rho, league_x12s:x12s, halflife_days:halflife, injury_signal:!!inj, edge_threshold_pct:+(params.edge_threshold_base*params.family_correction).toFixed(2), rule:"price_edge", extra_markets:true };
 }
 
@@ -612,7 +632,7 @@ async function settle(){ try{
       if(!sc){ if(ageDays(r.match_date)>10){ updates.push({id:r.id, result:"void"}); voided++; } continue; }
       if(sp===WORLD_CUP_SPORT) wcSettled[norm(sc.home)+"|"+norm(sc.away)]=sc;
       const dnbPush=String(r.market).startsWith("DNB")&&sc.hs===sc.as; // beraberlikte iade: para geri -> void
-      const lr=lineResult(r.market,sc.hs,sc.as); // basketbol alt/ust + handikap
+      const lr=lineResult(r.market,sc.hs,sc.as)||ahResult(r.market,sc.hs,sc.as); // basketbol alt/ust + handikap, futbol Asya handikabi
       updates.push({id:r.id, actual_score:sc.hs+"-"+sc.as, result: lr || (dnbPush? "void" : (evalMkt(r.market,sc.hs,sc.as)?"hit":"miss"))}); } }
   if(updates.length){ const {data,error:e2}=await sb().rpc("bahis_set_results",{p:updates}); if(e2) return {error:e2.message};
     const eloUpd=await applyEloUpdates(wcSettled);
@@ -676,7 +696,19 @@ async function captureClosing(){
       const evByKey={};
       for(const ev of events){ evByKey[norm(ev.home_team)+"|"+norm(ev.away_team)]=ev; }
       const updates=[];
+      let ahByKey=null;
       for(const r of pend){
+        if(/^AH[12]@/.test(r.market)){ // Asya handikabi kapanisi: spreads lig basina bir kez (1 kredi), yalniz ayni cizgi
+          if(ahByKey===null){ ahByKey={}; try{ const rr=await fetch(`https://api.the-odds-api.com/v4/sports/${sp}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=spreads&oddsFormat=decimal`);
+            if(rr.ok) for(const e of ((await rr.json())||[])) ahByKey[norm(e.home_team)+"|"+norm(e.away_team)]=e; }catch(e){ warn("closing ah",e); } }
+          const k2=findPair(r.home,r.away,ahByKey), e2=k2? ahByKey[k2] : null; if(!e2) continue;
+          const mm=/^AH([12])@(.+)$/.exec(r.market), side=mm[1], hl= side==="1"? +mm[2] : -(+mm[2]); let pinF=null, bestC=null;
+          for(const b of (e2.bookmakers||[])){ const m=(b.markets||[]).find((x)=>x.key==="spreads"); if(!m) continue;
+            const h=m.outcomes.find((o)=>o.name===e2.home_team), a=m.outcomes.find((o)=>o.name===e2.away_team); if(!h||!a||h.point==null||Math.abs(h.point-hl)>1e-9||!(h.price>1&&a.price>1)) continue;
+            const pr= side==="1"? h.price : a.price;
+            if(b.key==="pinnacle") pinF=1/shinDevig([1/h.price,1/a.price])[side==="1"?0:1]; else if(!EXCHANGE_KEYS.test(b.key||"")&&pr>(bestC||0)) bestC=pr; }
+          if(pinF||bestC) updates.push({ id:r.id, closing_odds:bestC, closing_pin:pinF? +pinF.toFixed(3) : null });
+          continue; }
         const k=findPair(r.home,r.away,evByKey); const ev=k? evByKey[k] : null;
         if(!ev) continue;
         const pl=parseLine(r.market);
@@ -704,7 +736,7 @@ async function calibrate(){
   try{
     const {data:rows0,error}=await sb().rpc("bahis_settled_for_calibration",{lim:3000});
     if(error) return {error:error.message};
-    const rows=(rows0||[]).filter((r)=>r.result!=="void"&&!isBasket(r.sport));
+    const rows=(rows0||[]).filter((r)=>(r.result==="hit"||r.result==="miss")&&!isBasket(r.sport)&&r.family!=="ah");
     const n=rows.length;
     const paramsBefore=await getParams();
     if(n<30) return { skipped:true, sample_size:n, reason:"need >=30 settled predictions to calibrate safely", params:paramsBefore };
@@ -1006,7 +1038,8 @@ async function backtest(body){
 const LG_TR={ soccer_epl:"Premier Lig", soccer_spain_la_liga:"La Liga", soccer_italy_serie_a:"Serie A", soccer_germany_bundesliga:"Bundesliga",
   soccer_france_ligue_one:"Ligue 1", soccer_turkey_super_league:"Süper Lig", soccer_uefa_champs_league:"Şampiyonlar Ligi", soccer_italy_serie_b:"Serie B",
   soccer_efl_champ:"Championship", soccer_portugal_primeira_liga:"Portekiz", soccer_spl:"İskoçya", basketball_nba:"🏀 NBA", basketball_euroleague:"🏀 Euroleague" };
-function mktLabel(c){ let m=/^([OU])@(.+)$/.exec(c||""); if(m) return (m[1]==="O"?"Üst ":"Alt ")+m[2];
+function mktLabel(c){ let m=/^AH([12])@(.+)$/.exec(c||""); if(m) return "Asya Hnd. "+m[1]+" ("+m[2]+")";
+  m=/^([OU])@(.+)$/.exec(c||""); if(m) return (m[1]==="O"?"Üst ":"Alt ")+m[2];
   m=/^H([12])@(.+)$/.exec(c||""); if(m) return "Hnd. MS "+m[1]+" ("+m[2]+")"; return MKN[c]||XMKN[c]||c; }
 async function getSetting(k){ try{ const {data,error}=await sb().rpc("bahis_get_setting",{k}); if(error) throw error; return data||null; }catch(e){ warn("setting "+k,e); return null; } }
 async function sendTelegram(text){
@@ -1053,6 +1086,11 @@ async function autosave(){
       total+=saved;
     }catch(e){ detail[sp]=String(e); }
   }
+  const ah=await ahScan();
+  const ahPicks=ah.all.filter((x)=>{ const dt=new Date(x.commence).getTime()-Date.now(); return dt>0&&dt<=8*86400000; }).map((x)=>({ sport:x.sport, home:x.home, away:x.away,
+    match_date:String(x.commence).slice(0,10), market:x.pick.code, family:"ah", model_prob:x.pick.prob/100, market_prob:x.pick.prob/100, edge_pct:0, odds:x.pick.odds,
+    odds_pinnacle:x.pick.fair_odds, pin_edge_pct:x.pick.pin_edge, is_value:true, source:"autosave", commence_time:x.commence }));
+  { let saved=0; if(ahPicks.length){ const r=await savePreds(ahPicks); saved=r.saved||0; } total+=saved; detail.asya_handikap={ candidates:ahPicks.length, saved, scan:ah.out }; }
   const telegram=total>0? await notifyNewPicks(since) : { sent:0, picks:0 };
   return { total_saved:total, detail, telegram, results };
 }
@@ -1073,6 +1111,7 @@ Deno.serve(async (req)=>{
     if(body.action==="settle") return J(await settle());
     if(body.action==="autosave") return J(await autosave());
     if(body.action==="collect_results") return J(await collectResults());
+    if(body.action==="ah_scan") return J(await ahScan()); // kaydetmeden tarama (onbellegi gunceller)
     if(body.action==="tg_test") return J(await sendTelegram("✅ BetFans bildirim testi — yeni değer seçimleri buraya gelecek.\nhttps://bet-fans.com"));
     if(body.action==="capture_closing") return J(await captureClosing());
     if(body.action==="calibrate") return J(await calibrate());
