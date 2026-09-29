@@ -2,12 +2,12 @@
 
 Geçmiş tahminlerde yeni TUTAN (result=hit) ve oranı >= MIN_ODDS olan her seçim için
 Canva TUTTU zemini üstüne kart çizer -> OUT/<ad>.jpg + <ad>-k.webp, OUT/kartlar.json (galeri).
-Yeni kartı yöneticiye Batfanbot'tan fotoğraf olarak yollar (her kart bir kez; STATE/gonderilen.json).
+Yeni kartı onaylı üyelere + yöneticiye Batfanbot'tan fotoğraf olarak yollar (her kart bir kez; STATE/gonderilen.json).
 
 Kullanım:  python kart.py              # üret + bildir
            python kart.py --no-notify  # üret, bildirmeden "gönderildi" say (ilk doldurma)
            python kart.py --test       # öz-denetim (ağ yok)
-Ortam: OUT (/out), STATE (/state), MIN_ODDS (2.0), BOT_TOKEN, CHAT_ID, SITE (https://bet-fans.com)
+Ortam: OUT (/out), STATE (/state), MIN_ODDS (2.0), CARD_KEY, SITE (https://bet-fans.com)
 """
 import json, os, re, sys, unicodedata, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
@@ -125,15 +125,22 @@ def gecmis():
 
 
 def telegram(r, name):
-    tok, chat = os.environ.get("BOT_TOKEN"), os.environ.get("CHAT_ID")
-    if not tok or not chat: print("bildirim: BOT_TOKEN/CHAT_ID yok"); return False
+    """Kartı onaylı üyelere + yöneticiye gönderir (bahis-tahmin card_broadcast; üye kimlikleri fonksiyonda kalır)."""
+    key = os.environ.get("CARD_KEY")
+    if not key: print("bildirim: CARD_KEY yok"); return False
     url = f"{SITE}/assets/paylasim/{name}.jpg"
-    cap = f"✅ Yeni TUTTU kartı hazır\n{r['home']} – {r['away']} · {pazar(r['market'])} · oran {float(r['odds']):.2f} · skor {r.get('actual_score') or '-'}\nPaylaşım linki: {url}"
-    body = urllib.parse.urlencode({"chat_id": chat, "photo": url, "caption": cap}).encode()
+    cap = "\n".join([
+        "✅ TUTTU!", f"{r['home']} – {r['away']}",
+        f"{pazar(r['market'])} · oran {float(r['odds']):.2f} · skor {r.get('actual_score') or '-'}", "",
+        f"Tüm sonuçlar (tutmayanlar dahil): {SITE}", f"Paylaş: {url}", "18+ · Geçmiş sonuç garanti değildir."])
+    body = json.dumps({"action": "card_broadcast", "f": name, "caption": cap}).encode()
+    req = urllib.request.Request(API, data=body, headers={"Content-Type": "application/json", "x-card-key": key})
     try:
-        with urllib.request.urlopen(f"https://api.telegram.org/bot{tok}/sendPhoto", data=body, timeout=30) as resp:
-            return json.load(resp).get("ok", False)
-    except Exception as e:  # token asla loglanmaz
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            d = json.load(resp)
+        print("gönderim:", name, {k: d.get(k) for k in ("sent", "total", "fail", "error", "reason")})
+        return (d.get("sent") or 0) > 0
+    except Exception as e:  # anahtar asla loglanmaz
         print("bildirim hatası:", type(e).__name__, getattr(e, "code", "")); return False
 
 
