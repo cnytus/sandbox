@@ -107,7 +107,7 @@ def ciz(r, zemin):
     d = gun(r)
     yazi(img, f"{r['home']} - {r['away']}", F_XB, 62, 606, (255, 255, 255, 255))
     yazi(img, f"{LIG[r['sport']]}   •   {d.day} {AY[d.month - 1]} {d.year}", F_B, 40, 688, (255, 255, 255, 205))
-    yazi(img, pazar(r["market"]) + " · adil oran", F_XB, 62, 792, (255, 255, 255, 255))
+    yazi(img, f"{pazar(r['market'])} · %{round(100 * float(r['model_prob']))} · adil oran", F_XB, 62, 792, (255, 255, 255, 255))
     yazi(img, f"{adil(r):.2f}", F_XB, 200, 948, (80, 232, 59, 255), max_w=560, glow=(80, 232, 59, 150))
     yazi(img, "Skor: " + (r.get("actual_score") or "-"), F_XB, 62, 1118, (255, 255, 255, 255))
     return img.convert("RGB")
@@ -131,7 +131,7 @@ def kaydet(img, name):
 
 
 def alt(r):
-    return f"Tuttu: {r['home']} – {r['away']}, {pazar(r['market'])}, adil oran {adil(r):.2f}, skor {r.get('actual_score') or '-'}"
+    return f"Tuttu: {r['home']} – {r['away']}, {pazar(r['market'])}, olasılık %{round(100 * float(r['model_prob']))}, adil oran {adil(r):.2f}, skor {r.get('actual_score') or '-'}"
 
 
 # --- ağ ---
@@ -152,7 +152,8 @@ def telegram(r, name, intl=False):
     url = f"{SITE}/assets/paylasim/{name}.jpg"
     cap = "\n".join([
         "✅ TUTTU!", f"{r['home']} – {r['away']}",
-        f"{pazar(r['market'])} · adil oran {adil(r):.2f} · skor {r.get('actual_score') or '-'}", "",
+        f"{pazar(r['market'])} · olasılık %{round(100 * float(r['model_prob']))} · adil oran {adil(r):.2f} · skor {r.get('actual_score') or '-'}",
+        "Adil oran = 1 ÷ model olasılığı; bahis şirketi oranı değildir.", "",
         f"Tüm sonuçlar (tutmayanlar dahil): {SITE}", f"Paylaş: {url}", "18+ · Geçmiş sonuç garanti değildir.",
         "Bu bildirimleri kapatmak için /durdur yaz."])
     msg = {"action": "card_broadcast", "f": name, "caption": cap}
