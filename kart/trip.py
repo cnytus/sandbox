@@ -11,7 +11,8 @@ def indir():
     for y, m in ((d.year, d.month), (d.year - (d.month == 1), 12 if d.month == 1 else d.month - 1)):
         url = f"https://download.db-ip.com/free/dbip-country-lite-{y}-{m:02d}.csv.gz"
         try:
-            with urllib.request.urlopen(url, timeout=120) as r:
+            req = urllib.request.Request(url, headers={"User-Agent": "BetFans-trip/1.0 (+https://bet-fans.com)"})  # DB-IP varsayılan Python UA'yı 403 ile reddediyor
+            with urllib.request.urlopen(req, timeout=120) as r:
                 return url, r.read()
         except Exception as e:
             print("indirilemedi:", url, type(e).__name__)
