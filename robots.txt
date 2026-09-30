@@ -1,4 +1,5 @@
 User-agent: *
 Allow: /
+Disallow: /assets/paylasim/intl/
 
 Sitemap: https://bet-fans.com/sitemap.xml
