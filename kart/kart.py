@@ -113,6 +113,18 @@ def ciz(r, zemin):
     return img.convert("RGB")
 
 
+def ciz_intl(r, zemin):
+    """Yurtdışı üyeler için (intl_view açıkken): büyük sayı gerçek oran. Türkiye'de gösterilmez."""
+    img = zemin.copy()
+    d = gun(r)
+    yazi(img, f"{r['home']} - {r['away']}", F_XB, 62, 606, (255, 255, 255, 255))
+    yazi(img, f"{LIG[r['sport']]}   •   {d.day} {AY[d.month - 1]} {d.year}", F_B, 40, 688, (255, 255, 255, 205))
+    yazi(img, "Pazar: " + pazar(r["market"]), F_XB, 62, 792, (255, 255, 255, 255))
+    yazi(img, f"{float(r['odds']):.2f}", F_XB, 200, 948, (80, 232, 59, 255), max_w=560, glow=(80, 232, 59, 150))
+    yazi(img, "Skor: " + (r.get("actual_score") or "-"), F_XB, 62, 1118, (255, 255, 255, 255))
+    return img.convert("RGB")
+
+
 def kaydet(img, name):
     img.save(os.path.join(OUT, name + ".jpg"), quality=88, optimize=True, progressive=True)
     img.resize((432, 540), Image.LANCZOS).save(os.path.join(OUT, name + "-k.webp"), quality=82)
@@ -124,12 +136,16 @@ def alt(r):
 
 # --- ağ ---
 def gecmis():
-    req = urllib.request.Request(API, data=b'{"action":"history"}', headers={"Content-Type": "application/json"})
+    """Geçmiş + intl_view bayrağı. CARD_KEY ile oranlar da gelir (yalnız yurtdışı kartı için; Türkiye kartında kullanılmaz)."""
+    h = {"Content-Type": "application/json"}
+    if os.environ.get("CARD_KEY"): h["x-card-key"] = os.environ["CARD_KEY"]
+    req = urllib.request.Request(API, data=b'{"action":"history"}', headers=h)
     with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.load(resp).get("rows", [])
+        d = json.load(resp)
+    return d.get("rows", []), bool(d.get("intl_view"))
 
 
-def telegram(r, name):
+def telegram(r, name, intl=False):
     """Kartı onaylı üyelere + yöneticiye gönderir (bahis-tahmin card_broadcast; üye kimlikleri fonksiyonda kalır)."""
     key = os.environ.get("CARD_KEY")
     if not key: print("bildirim: CARD_KEY yok"); return False
@@ -139,7 +155,14 @@ def telegram(r, name):
         f"{pazar(r['market'])} · adil oran {adil(r):.2f} · skor {r.get('actual_score') or '-'}", "",
         f"Tüm sonuçlar (tutmayanlar dahil): {SITE}", f"Paylaş: {url}", "18+ · Geçmiş sonuç garanti değildir.",
         "Bu bildirimleri kapatmak için /durdur yaz."])
-    body = json.dumps({"action": "card_broadcast", "f": name, "caption": cap}).encode()
+    msg = {"action": "card_broadcast", "f": name, "caption": cap}
+    if intl and r.get("odds"):
+        msg["f_intl"] = name
+        msg["caption_intl"] = "\n".join([
+            "✅ WON!", f"{r['home']} – {r['away']}",
+            f"{pazar(r['market'])} · odds {float(r['odds']):.2f} · score {r.get('actual_score') or '-'}", "",
+            f"All results: {SITE}", "18+ · Past results are no guarantee.", "Stop: /durdur"])
+    body = json.dumps(msg).encode()
     req = urllib.request.Request(API, data=body, headers={"Content-Type": "application/json", "x-card-key": key})
     try:
         with urllib.request.urlopen(req, timeout=90) as resp:
@@ -153,13 +176,20 @@ def telegram(r, name):
 def calis(notify=True):
     os.makedirs(OUT, exist_ok=True); os.makedirs(STATE, exist_ok=True)
     zemin = Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA")
-    rows = [r for r in gecmis() if uygun(r)]
+    tum, intl = gecmis()
+    rows = [r for r in tum if uygun(r)]
+    idir = os.path.join(OUT, "intl"); os.makedirs(idir, exist_ok=True)
     rows.sort(key=lambda r: (gun(r), adil(r)), reverse=True)
     yeni = []
     for r in rows:
         name = ad(r)
         if not os.path.exists(os.path.join(OUT, name + ".jpg")):
             kaydet(ciz(r, zemin), name); yeni.append(name); print("kart:", name)
+        ip = os.path.join(idir, name + ".jpg")
+        if intl and r.get("odds") and not os.path.exists(ip):
+            ciz_intl(r, zemin).save(ip, quality=88, optimize=True, progressive=True)
+    if not intl:  # ayar kapalıyken gerçek oranlı kart sunucuda durmaz
+        for fn in os.listdir(idir): os.remove(os.path.join(idir, fn))
     manifest = [{"f": ad(r), "alt": alt(r), "d": f"{gun(r):%Y-%m-%d}", "o": round(adil(r), 2)} for r in rows][:GALLERY_MAX]
     tmp = os.path.join(OUT, "kartlar.json.tmp")
     with open(tmp, "w", encoding="utf-8") as fh: json.dump(manifest, fh, ensure_ascii=False)
@@ -173,7 +203,7 @@ def calis(notify=True):
         if name in sent: continue
         if notify:
             if n >= NOTIFY_MAX: break
-            if not telegram(r, name): continue  # gönderilemedi -> sonraki koşu tekrar dener
+            if not telegram(r, name, intl): continue  # gönderilemedi -> sonraki koşu tekrar dener
             n += 1
         sent.add(name)
     with open(sp, "w", encoding="utf-8") as fh: json.dump(sorted(sent), fh)
@@ -194,6 +224,7 @@ def test():
     OUT = tempfile.mkdtemp()
     img = ciz(r, Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA"))
     assert img.size == (1080, 1350)
+    assert ciz_intl({**r, "odds": 7.6}, Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA")).size == (1080, 1350)
     kaydet(img, ad(r))
     assert os.path.getsize(os.path.join(OUT, ad(r) + ".jpg")) > 50_000
     print("test OK ->", OUT)

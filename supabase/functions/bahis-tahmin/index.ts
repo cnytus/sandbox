@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.22";
+const VERSION="10.23";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -1105,6 +1105,27 @@ async function autosave(opt={}){
   return { total_saved:total, detail, telegram, results };
 }
 
+// ---- Yurtdisi gorunumu (2026-09-30) ----
+// Turkiye (7258 md.5): kullaniciya yabanci bahis sirketi adi/orani gosterilmez. Yurtdisi uye (dogrulanmis telefon +90 DISI ve
+// o an Turkiye IP'si DEGIL) eski ayrintili gorunumu gorebilir; ayar settings.intl_view="true" olmadikca KAPALI. Belirsizlikte Turkiye sayilir.
+// Eski gorunumun sirket adli metinleri sayfa kaynaginda DEGIL, yalniz yurtdisi uyeye giden yanitta (INTL_T) gelir.
+const INTL_T={
+  tr:{legendValue:"<span class='dot' style='background:var(--good)'></span><b>Pinnacle adil fiyatından +{thr}% iyi = DEĞER</b>",srcPrice:"🏀 Fiyat karşılaştırması (Pinnacle adil) · tüm pazarlar uzatmalar dahil",bkNoPin:"Pinnacle fiyatı henüz yok (genelde maç günü açılır) — seçim o zaman yapılır",stake:"Kupon yatırımı",ret:"olası dönüş",totalOdds:"Toplam oran",pinLbl:"Pinnacle",kellyLbl:"Kelly"},
+  en:{legendValue:"<span class='dot' style='background:var(--good)'></span><b>+{thr}% better than Pinnacle fair price = VALUE</b>",srcPrice:"🏀 Price comparison (Pinnacle fair) · Match result incl. overtime",bkNoPin:"No Pinnacle price yet (usually opens on match day) — pick comes then",stake:"Coupon stake",ret:"potential return",totalOdds:"Total odds",pinLbl:"Pinnacle",kellyLbl:"Kelly"},
+  de:{legendValue:"<span class='dot' style='background:var(--good)'></span><b>+{thr}% besser als fairer Pinnacle-Preis = VALUE</b>",srcPrice:"🏀 Preisvergleich (Pinnacle fair) · Spielergebnis inkl. Verlängerung",stake:"Schein-Einsatz",ret:"möglicher Ertrag",totalOdds:"Gesamtquote",pinLbl:"Pinnacle",kellyLbl:"Kelly"},
+  ar:{legendValue:"<span class='dot' style='background:var(--good)'></span><b>أفضل من سعر Pinnacle العادل بـ +{thr}% = قيمة</b>",srcPrice:"🏀 مقارنة الأسعار (Pinnacle العادل) · النتيجة تشمل الوقت الإضافي",stake:"مبلغ القسيمة",ret:"العائد المحتمل",totalOdds:"إجمالي الأودز",pinLbl:"Pinnacle",kellyLbl:"Kelly"} };
+async function intlOn(){ return String(await getSetting("intl_view")||"")==="true"; }
+const phoneIntl=(ph)=>!!ph&&/^\+\d{6,}$/.test(String(ph))&&!String(ph).startsWith("+90");
+async function intlFor(req,m){ try{
+  if(!m||m.status!=="approved"||!m.phone_verified||!(await intlOn())) return false;
+  const {data:mm}=await sb().rpc("bahis_member_by_id",{i:m.id}); const full=mm&&mm[0]; if(!full||!phoneIntl(full.phone)) return false;
+  const ip=clientIp(req); if(!ip||ip==="?") return false; // IP yoksa Turkiye say
+  const {data:isTr,error}=await sb().rpc("bahis_ip_is_tr",{ip}); if(error){ warn("ip_is_tr",error); return false; }
+  return isTr===false; }catch(e){ warn("intlFor",e); return false; } }
+const BOOK_KEYS=new Set(["book","books","books_used","bookmaker","bookmakers"]);
+function stripBooks(o){ if(Array.isArray(o)){ for(const x of o) stripBooks(x); } else if(o&&typeof o==="object"){ for(const k of Object.keys(o)){ if(BOOK_KEYS.has(k)) delete o[k]; else stripBooks(o[k]); } } return o; }
+const HIST_ODDS=["odds","odds_pinnacle","closing_odds","closing_odds_pinnacle"];
+
 // ---- Uyelik (2026-09-29) ----
 // Kayit (e-posta + telefon + sifre) -> 'pending'. Telefon BetFans Telegram botunda "numarami paylas" ile dogrulanir; sonra yoneticiye
 // onay/ret baglantili bildirim gider (JW'nin bildirim botu, yonetici sohbeti). Oranlari/tahminleri yalniz 'approved' uyeler gorur;
@@ -1118,14 +1139,18 @@ async function sessionMember(req){ const t=req.headers.get("x-session"); if(!t||
   try{ const {data}=await sb().rpc("bahis_session_member",{th:await sha256hex(t)}); return (data&&data[0])||null; }catch(e){ warn("session",e); return null; } }
 async function newSession(memberId){ const t=randomToken(); await sb().rpc("bahis_session_create",{th:await sha256hex(t),i:memberId,days:30}); return t; }
 // TUTTU karti -> onayli uyeler + yonetici sohbeti (her sohbete bir kez). Gorsel bet-fans.com'da; Telegram URL'den ceker.
-async function cardBroadcast(b){ const f=String(b.f||""); if(!/^kart-[a-z0-9-]{5,160}$/.test(f)) return { error:"gecersiz kart adi" };
+async function cardBroadcast(b){ const f=String(b.f||""), fi=String(b.f_intl||""); if(!/^kart-[a-z0-9-]{5,160}$/.test(f)) return { error:"gecersiz kart adi" };
+  if(fi&&!/^kart-[a-z0-9-]{5,160}$/.test(fi)) return { error:"gecersiz yurtdisi kart adi" };
   const bot=await botCfg(); if(!bot) return { sent:0, reason:"bot ayari yok" };
-  const {data,error}=await sb().rpc("bahis_member_chats"); if(error) return { sent:0, error:error.message };
-  const admin=await getSetting("telegram_chat_id"); const chats=[...new Set([...(data||[]).map(String), ...(admin?[String(admin)]:[])])];
-  const photo=`https://bet-fans.com/assets/paylasim/${f}.jpg`, caption=String(b.caption||"").slice(0,1000); let sent=0; const fail=[];
-  for(const chat of chats){ try{ const r=await fetch(`https://api.telegram.org/bot${bot.token}/sendPhoto`,{ method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({ chat_id:chat, photo, caption }) }); if(r.ok) sent++; else fail.push(r.status); }catch(e){ warn("cardBroadcast",e); fail.push("hata"); } }
-  return { sent, total:chats.length, fail }; }
+  const {data,error}=await sb().rpc("bahis_member_push_targets"); if(error) return { sent:0, error:error.message };
+  const intl=fi&&await intlOn(); const admin=await getSetting("telegram_chat_id"); const to=new Map(); // sohbet -> yurtdisi mi
+  for(const r of (data||[])) to.set(String(r.tg_chat_id), !!(intl&&r.phone_verified&&phoneIntl(r.phone)));
+  if(admin&&!to.has(String(admin))) to.set(String(admin), false); // yonetici Turkiye
+  const cap=String(b.caption||"").slice(0,1000), capI=String(b.caption_intl||b.caption||"").slice(0,1000); let sent=0, sentIntl=0; const fail=[];
+  for(const [chat,isI] of to){ const photo=isI? `https://bet-fans.com/assets/paylasim/intl/${fi}.jpg` : `https://bet-fans.com/assets/paylasim/${f}.jpg`;
+    try{ const r=await fetch(`https://api.telegram.org/bot${bot.token}/sendPhoto`,{ method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ chat_id:chat, photo, caption:isI?capI:cap }) }); if(r.ok){ sent++; if(isI) sentIntl++; } else fail.push(r.status); }catch(e){ warn("cardBroadcast",e); fail.push("hata"); } }
+  return { sent, sent_intl:sentIntl, total:to.size, fail }; }
 async function botCfg(){ const [token,username,secret]=await Promise.all(["betfans_bot_token","betfans_bot_username","betfans_bot_secret"].map(getSetting)); return token&&username? { token, username, secret } : null; }
 async function botSend(bot,chat,text,extra={}){ try{ await fetch(`https://api.telegram.org/bot${bot.token}/sendMessage`,{ method:"POST", headers:{"Content-Type":"application/json"},
     body:JSON.stringify({ chat_id:chat, text, disable_web_page_preview:true, ...extra }) }); }catch(e){ warn("botSend",e); } }
@@ -1234,6 +1259,8 @@ Deno.serve(async (req)=>{
       if(!ADMIN_KEY) return J({ error:"BAHIS_ADMIN_KEY secret'i tanimli degil; admin action kapali" },503);
       if(req.headers.get("x-admin-key")!==ADMIN_KEY) return J({ error:"yetkisiz" },401);
     }
+    if(body.action==="tr_ip_set"){ if(!CARD_KEY||req.headers.get("x-card-key")!==CARD_KEY) return J({ error:"yetkisiz" },401);
+      const {data,error}=await sb().rpc("bahis_tr_ip_replace",{p:body.ranges||[]}); return error? J({ error:error.message },400) : J({ ok:true, ranges:data }); }
     if(body.action==="card_broadcast"){ if(!CARD_KEY||req.headers.get("x-card-key")!==CARD_KEY) return J({ error:"yetkisiz" },401); return J(await cardBroadcast(body)); }
     if(body.action==="bot_setup") return await botSetup(body);
     if(body.action==="notify_pending"){ const {data}=await sb().rpc("bahis_members_pending"); for(const m of (data||[])) await notifyAdminSignup(m); return J({ ok:true, notified:(data||[]).length }); }
@@ -1244,13 +1271,16 @@ Deno.serve(async (req)=>{
     if(body.action==="reset_password") return await resetPassword(req,body);
     if(body.action==="fixtures"){ // yalniz onayli uyeler (kredi korumasi da burada)
       const m=await sessionMember(req); if(!m||m.status!=="approved") return J({ error:"members_only", status:m?m.status:null },401);
-      return J(await fetchFixtures(body.sport||WORLD_CUP_SPORT,true)); }
+      const fx=structuredClone(await fetchFixtures(body.sport||WORLD_CUP_SPORT,true)); const intl=await intlFor(req,m);
+      if(!intl) stripBooks(fx); fx.intl=intl; if(intl) fx.intl_t=INTL_T; return J(fx); }
     if(body.action==="save") return J(await savePreds(body.picks||[]));
     if(body.action==="history"){ // uye olmayanlar yalniz sonuclanmis tahminleri gorur (bekleyen = guncel secim)
       const h=await getHistory(body.sport); const m=await sessionMember(req);
       if((!m||m.status!=="approved")&&h.rows) h.rows=h.rows.filter((r)=>r.result!=null);
       // Uyum (2026-09-30, 7258 md.5): yabanci bahis sirketi oranlari istemciye gonderilmez (olasilik/CLV yeterli)
-      if(h.rows) h.rows=h.rows.map(({odds,odds_pinnacle,closing_odds,closing_odds_pinnacle,...r})=>r); return J(h); }
+      const svc=!!CARD_KEY&&req.headers.get("x-card-key")===CARD_KEY; const intl=svc? false : await intlFor(req,m);
+      if(h.rows&&!svc&&!intl) h.rows=h.rows.map((r)=>{ const o={...r}; for(const k of HIST_ODDS) delete o[k]; return o; });
+      if(svc) h.intl_view=await intlOn(); h.intl=intl; if(intl) h.intl_t=INTL_T; return J(h); }
     if(body.action==="settle") return J(await settle(body.sports));
     if(body.action==="autosave") return J(await autosave({ sport:body.sport, extras:!!body.extras, since_min:body.since_min }));
     if(body.action==="collect_results") return J(await collectResults());
