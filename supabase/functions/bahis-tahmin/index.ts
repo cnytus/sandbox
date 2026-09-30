@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.21";
+const VERSION="10.22";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -1057,7 +1057,7 @@ const trTime=(iso)=>{ try{ return new Date(iso).toLocaleString("tr-TR",{ timeZon
 async function notifyNewPicks(since){ try{
   const {data:rows,error}=await sb().rpc("bahis_recent_autosave",{since}); if(error) throw error; if(!rows||!rows.length) return { sent:0, picks:0 };
   const lines=[`🎯 BetFans — ${rows.length} yeni değer seçimi`];
-  for(const r of rows) lines.push(`${trTime(r.commence_time)} · ${LG_TR[r.sport]||r.sport}\n${r.home} – ${r.away}\n➡️ ${mktLabel(r.market)} @ ${(+r.odds).toFixed(2)}${r.pin_edge_pct!=null?` (Pinnacle'a göre +%${(+r.pin_edge_pct).toFixed(1)})`:""}`);
+  for(const r of rows) lines.push(`${trTime(r.commence_time)} · ${LG_TR[r.sport]||r.sport}\n${r.home} – ${r.away}\n➡️ ${mktLabel(r.market)}${r.pin_edge_pct!=null?` · değer sinyali +%${(+r.pin_edge_pct).toFixed(1)}`:""}`); // uyum 2026-09-30: oran/sirket adi yok
   lines.push("https://bet-fans.com");
   return { ...(await sendTelegram(lines.join("\n\n"))), picks:rows.length };
 }catch(e){ warn("notifyNewPicks",e); return { sent:0, error:String(e) }; } }
@@ -1248,7 +1248,9 @@ Deno.serve(async (req)=>{
     if(body.action==="save") return J(await savePreds(body.picks||[]));
     if(body.action==="history"){ // uye olmayanlar yalniz sonuclanmis tahminleri gorur (bekleyen = guncel secim)
       const h=await getHistory(body.sport); const m=await sessionMember(req);
-      if((!m||m.status!=="approved")&&h.rows) h.rows=h.rows.filter((r)=>r.result!=null); return J(h); }
+      if((!m||m.status!=="approved")&&h.rows) h.rows=h.rows.filter((r)=>r.result!=null);
+      // Uyum (2026-09-30, 7258 md.5): yabanci bahis sirketi oranlari istemciye gonderilmez (olasilik/CLV yeterli)
+      if(h.rows) h.rows=h.rows.map(({odds,odds_pinnacle,closing_odds,closing_odds_pinnacle,...r})=>r); return J(h); }
     if(body.action==="settle") return J(await settle(body.sports));
     if(body.action==="autosave") return J(await autosave({ sport:body.sport, extras:!!body.extras, since_min:body.since_min }));
     if(body.action==="collect_results") return J(await collectResults());
