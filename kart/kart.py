@@ -18,7 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.environ.get("OUT", "/out")
 STATE = os.environ.get("STATE", "/state")
 SITE = os.environ.get("SITE", "https://bet-fans.com")
-MIN_ODDS = float(os.environ.get("MIN_ODDS", "2.0"))
+MIN_ODDS = float(os.environ.get("MIN_ODDS", "2.0"))  # eşik BetFans adil oranına (1/model_prob) uygulanır
 GALLERY_MAX = 12
 NOTIFY_MAX = 5  # ponytail: bir koşuda en çok 5 bildirim; durum dosyası kaybolursa sel olmasın
 
@@ -64,8 +64,13 @@ def ad(r):
     return f"kart-{gun(r):%Y-%m-%d}-{slug(r['home'])}-{slug(r['away'])}-{slug(r['market'])}"
 
 
+def adil(r):
+    """BetFans adil oranı = 1 / model olasılığı. Uyum (2026-09-30, 7258 md.5): bahis şirketi oranı gösterilmez."""
+    return 1 / float(r["model_prob"])
+
+
 def uygun(r):
-    return (r.get("result") == "hit" and r.get("odds") and float(r["odds"]) >= MIN_ODDS
+    return (r.get("result") == "hit" and r.get("model_prob") and adil(r) >= MIN_ODDS
             and r.get("sport") in LIG and pazar(r.get("market")) and r.get("home") and r.get("away")
             and (r.get("commence_time") or r.get("match_date")))
 
@@ -102,8 +107,8 @@ def ciz(r, zemin):
     d = gun(r)
     yazi(img, f"{r['home']} - {r['away']}", F_XB, 62, 606, (255, 255, 255, 255))
     yazi(img, f"{LIG[r['sport']]}   •   {d.day} {AY[d.month - 1]} {d.year}", F_B, 40, 688, (255, 255, 255, 205))
-    yazi(img, "Pazar: " + pazar(r["market"]), F_XB, 62, 792, (255, 255, 255, 255))
-    yazi(img, f"{float(r['odds']):.2f}", F_XB, 200, 948, (80, 232, 59, 255), max_w=560, glow=(80, 232, 59, 150))
+    yazi(img, pazar(r["market"]) + " · adil oran", F_XB, 62, 792, (255, 255, 255, 255))
+    yazi(img, f"{adil(r):.2f}", F_XB, 200, 948, (80, 232, 59, 255), max_w=560, glow=(80, 232, 59, 150))
     yazi(img, "Skor: " + (r.get("actual_score") or "-"), F_XB, 62, 1118, (255, 255, 255, 255))
     return img.convert("RGB")
 
@@ -114,7 +119,7 @@ def kaydet(img, name):
 
 
 def alt(r):
-    return f"Tuttu: {r['home']} – {r['away']}, {pazar(r['market'])}, oran {float(r['odds']):.2f}, skor {r.get('actual_score') or '-'}"
+    return f"Tuttu: {r['home']} – {r['away']}, {pazar(r['market'])}, adil oran {adil(r):.2f}, skor {r.get('actual_score') or '-'}"
 
 
 # --- ağ ---
@@ -131,7 +136,7 @@ def telegram(r, name):
     url = f"{SITE}/assets/paylasim/{name}.jpg"
     cap = "\n".join([
         "✅ TUTTU!", f"{r['home']} – {r['away']}",
-        f"{pazar(r['market'])} · oran {float(r['odds']):.2f} · skor {r.get('actual_score') or '-'}", "",
+        f"{pazar(r['market'])} · adil oran {adil(r):.2f} · skor {r.get('actual_score') or '-'}", "",
         f"Tüm sonuçlar (tutmayanlar dahil): {SITE}", f"Paylaş: {url}", "18+ · Geçmiş sonuç garanti değildir.",
         "Bu bildirimleri kapatmak için /durdur yaz."])
     body = json.dumps({"action": "card_broadcast", "f": name, "caption": cap}).encode()
@@ -149,13 +154,13 @@ def calis(notify=True):
     os.makedirs(OUT, exist_ok=True); os.makedirs(STATE, exist_ok=True)
     zemin = Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA")
     rows = [r for r in gecmis() if uygun(r)]
-    rows.sort(key=lambda r: (gun(r), float(r["odds"])), reverse=True)
+    rows.sort(key=lambda r: (gun(r), adil(r)), reverse=True)
     yeni = []
     for r in rows:
         name = ad(r)
         if not os.path.exists(os.path.join(OUT, name + ".jpg")):
             kaydet(ciz(r, zemin), name); yeni.append(name); print("kart:", name)
-    manifest = [{"f": ad(r), "alt": alt(r), "d": f"{gun(r):%Y-%m-%d}", "o": float(r["odds"])} for r in rows][:GALLERY_MAX]
+    manifest = [{"f": ad(r), "alt": alt(r), "d": f"{gun(r):%Y-%m-%d}", "o": round(adil(r), 2)} for r in rows][:GALLERY_MAX]
     tmp = os.path.join(OUT, "kartlar.json.tmp")
     with open(tmp, "w", encoding="utf-8") as fh: json.dump(manifest, fh, ensure_ascii=False)
     os.replace(tmp, os.path.join(OUT, "kartlar.json"))
@@ -181,8 +186,8 @@ def test():
     assert pazar("O@170.5") == "Üst 170.5" and pazar("H2@+5.5") == "Hnd. MS 2 (+5.5)" and pazar("ZZ") is None
     assert slug("Málaga İstanbul FC") == "malaga-istanbul-fc"
     r = {"sport": "soccer_france_ligue_one", "home": "Paris Saint Germain", "away": "AS Monaco", "market": "2",
-         "odds": 7.6, "actual_score": "1-2", "result": "hit", "match_date": "2026-09-04", "commence_time": None}
-    assert uygun(r) and not uygun({**r, "odds": 1.9}) and not uygun({**r, "result": "half_hit"}) and not uygun({**r, "sport": "x"})
+         "model_prob": 0.281, "actual_score": "1-2", "result": "hit", "match_date": "2026-09-04", "commence_time": None}
+    assert uygun(r) and not uygun({**r, "model_prob": 0.6}) and not uygun({**r, "result": "half_hit"}) and not uygun({**r, "sport": "x"})
     assert gun({"commence_time": "2026-09-20T22:30:00Z"}).day == 21  # TR saatine göre ertesi gün
     assert ad(r) == "kart-2026-09-04-paris-saint-germain-as-monaco-2"
     global OUT
