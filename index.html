@@ -71,6 +71,7 @@ select:focus,input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 
 .lr{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-bottom:9px}.lr input{width:100%}
 label.f{display:block;font-size:11px;color:var(--muted);margin:10px 0 4px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
 #authModal input:not([type=checkbox]){width:100%}
+.telrow{display:flex;gap:6px}.telrow select{flex:0 0 132px;min-width:0}.telrow input{flex:1;min-width:0}
 .src{display:inline-block;font-size:11px;font-weight:600;color:var(--muted);background:var(--chip);border:1px solid var(--line);border-radius:30px;padding:3px 10px;margin:2px 0 8px}
 .src.good{color:var(--good-txt);background:var(--good-soft);border-color:rgba(34,227,107,.35)}
 .pick{background:var(--good-soft);border:1px solid rgba(34,227,107,.35);color:var(--good-txt);border-radius:10px;padding:8px 12px;font-size:12.5px;margin:6px 0 10px;font-weight:600}
@@ -412,12 +413,14 @@ function authMode(mode){['login','signup','reset','done'].forEach(k=>{const e=do
 function authErr(t){document.getElementById('authErr').textContent=t||'';}
 async function doLogin(){const d=await api({action:'login',email:val('li_email'),password:val('li_pass')});if(!d.ok)return authErr(d.error||'Giriş yapılamadı.');setSess(d.token);member={email:d.email,status:d.status,phone_verified:d.phone_verified};closeAuth();afterAuth(d.tg_link);}
 async function doSignup(){if(val('su_pass')!==val('su_pass2'))return authErr('Şifreler aynı değil.');
- const d=await api({action:'signup',email:val('su_email'),phone:val('su_phone'),password:val('su_pass'),kvkk:document.getElementById('su_kvkk').checked,hp:val('su_web'),ts:authTs});
+ const d=await api({action:'signup',email:val('su_email'),phone:signupPhone(),password:val('su_pass'),kvkk:document.getElementById('su_kvkk').checked,hp:val('su_web'),ts:authTs});
  if(!d.ok)return authErr(d.error||'Kayıt yapılamadı.');if(!d.token){authMode('done');return;}
  setSess(d.token);member={email:d.email,status:d.status,phone_verified:false};authMode('done');
  document.getElementById('af_done_tg').innerHTML=tgBlock(d.tg_link);afterAuth(d.tg_link);}
 async function doReset(){if(val('rs_pass')!==val('rs_pass2'))return authErr('Şifreler aynı değil.');const d=await api({action:'reset_password',token:resetToken,password:val('rs_pass')});if(!d.ok)return authErr(d.error||'Şifre değiştirilemedi.');try{history.replaceState(null,'',location.pathname);}catch(e){}authMode('login');authErr('✅ Şifren değişti, giriş yapabilirsin.');}
 async function logout(){await api({action:'logout'});setSess('');member=null;INTL=false;INTL_T=null;matches=[];couponPool={};authBtnRender();renderLocked();refreshHistory(document.getElementById('histSport').value);}
+function signupPhone(){const raw=val('su_phone').replace(/[\s()\-.]/g,'');if(/^(\+|00)/.test(raw))return raw;const cc=(document.getElementById('su_cc')||{}).value||'+90';return cc+(cc==='+39'?raw:raw.replace(/^0/,''));}
+function ccHint(){const e=document.getElementById('su_phone');if(e)e.placeholder=document.getElementById('su_cc').value==='+90'?'532 123 45 67':'Numara (başında 0 olmadan)';}
 function val(id){const e=document.getElementById(id);return e?e.value.trim():'';}
 function afterAuth(tg){authBtnRender();if(member&&member.status==='approved'){auto();}else renderLocked(tg);refreshHistory(document.getElementById('histSport').value);}
 let resetToken=(location.hash.match(/reset=([0-9a-f]{64})/)||[])[1]||'';
@@ -548,7 +551,7 @@ document.addEventListener('visibilitychange',()=>{ if(!document.hidden && member
 <button class="b1" style="width:100%;margin-top:12px" onclick="doLogin()">Giriş yap</button>
 <p style="font-size:13px;margin:10px 0 0">Hesabın yok mu? <a href="#" onclick="authMode('signup');return false">Üye ol</a> · Şifreni mi unuttun? Telegram'da BetFans botuna <b>/sifre</b> yaz.</p></div>
 <div id="af_signup" style="display:none"><label class="f" for="su_email">E-posta</label><input id="su_email" type="email" autocomplete="email">
-<label class="f" for="su_phone">Cep telefonu</label><input id="su_phone" type="tel" autocomplete="tel" placeholder="0532 123 45 67">
+<label class="f" for="su_phone">Cep telefonu</label><div class="telrow"><select id="su_cc" aria-label="Ülke kodu" onchange="ccHint()"><option value="+90">🇹🇷 +90 Türkiye / KKTC</option><option value="+44">🇬🇧 +44 Birleşik Krallık</option><option value="+49">🇩🇪 +49 Almanya</option><option value="+31">🇳🇱 +31 Hollanda</option><option value="+32">🇧🇪 +32 Belçika</option><option value="+33">🇫🇷 +33 Fransa</option><option value="+43">🇦🇹 +43 Avusturya</option><option value="+41">🇨🇭 +41 İsviçre</option><option value="+357">🇨🇾 +357 Kıbrıs (GKRY)</option><option value="+994">🇦🇿 +994 Azerbaycan</option><option value="+995">🇬🇪 +995 Gürcistan</option><option value="+359">🇧🇬 +359 Bulgaristan</option><option value="+30">🇬🇷 +30 Yunanistan</option><option value="+40">🇷🇴 +40 Romanya</option><option value="+39">🇮🇹 +39 İtalya</option><option value="+34">🇪🇸 +34 İspanya</option><option value="+351">🇵🇹 +351 Portekiz</option><option value="+353">🇮🇪 +353 İrlanda</option><option value="+46">🇸🇪 +46 İsveç</option><option value="+45">🇩🇰 +45 Danimarka</option><option value="+47">🇳🇴 +47 Norveç</option><option value="+358">🇫🇮 +358 Finlandiya</option><option value="+48">🇵🇱 +48 Polonya</option><option value="+380">🇺🇦 +380 Ukrayna</option><option value="+7">🇷🇺 +7 Rusya / Kazakistan</option><option value="+971">🇦🇪 +971 BAE</option><option value="+966">🇸🇦 +966 Suudi Arabistan</option><option value="+974">🇶🇦 +974 Katar</option><option value="+1">🇺🇸 +1 ABD / Kanada</option><option value="+61">🇦🇺 +61 Avustralya</option></select><input id="su_phone" type="tel" autocomplete="tel-national" placeholder="532 123 45 67"></div>
 <label class="f" for="su_pass">Şifre (en az 8 karakter)</label><input id="su_pass" type="password" autocomplete="new-password"><label class="f" for="su_pass2">Şifre tekrar</label><input id="su_pass2" type="password" autocomplete="new-password">
 <input id="su_web" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
 <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;margin-top:10px"><input id="su_kvkk" type="checkbox" style="width:auto;margin-top:2px"><span>18 yaşından büyüğüm. E-posta ve telefon numaram yalnızca üyelik doğrulaması ve hesap güvenliği için işlenir, üçüncü kişilerle paylaşılmaz; istediğimde silinmesini talep edebilirim (KVKK aydınlatma).</span></label>
