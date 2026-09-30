@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.25";
+const VERSION="10.26";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -1148,12 +1148,12 @@ async function cardBroadcast(b){ const f=String(b.f||""), fi=String(b.f_intl||""
   const bot=await botCfg(); if(!bot) return { sent:0, reason:"bot ayari yok" };
   const {data,error}=await sb().rpc("bahis_member_push_targets"); if(error) return { sent:0, error:error.message };
   const intl=fi&&await intlOn(); const admin=await getSetting("telegram_chat_id"); const to=new Map(); // sohbet -> yurtdisi mi
-  for(const r of (data||[])) to.set(String(r.tg_chat_id), !!(intl&&r.phone_verified&&phoneIntl(r.phone)));
+  const en=new Set(); for(const r of (data||[])){ to.set(String(r.tg_chat_id), !!(intl&&r.phone_verified&&phoneIntl(r.phone))); if(phoneLang(r.phone)==="en") en.add(String(r.tg_chat_id)); }
   if(admin&&!to.has(String(admin))) to.set(String(admin), false); // yonetici Turkiye
-  const cap=String(b.caption||"").slice(0,1000), capI=String(b.caption_intl||b.caption||"").slice(0,1000); let sent=0, sentIntl=0; const fail=[];
+  const cap=String(b.caption||"").slice(0,1000), capEn=String(b.caption_en||b.caption||"").slice(0,1000), capI=String(b.caption_intl||b.caption||"").slice(0,1000); let sent=0, sentIntl=0; const fail=[];
   for(const [chat,isI] of to){ const photo=isI? `https://bet-fans.com/assets/paylasim/intl/${fi}.jpg` : `https://bet-fans.com/assets/paylasim/${f}.jpg`;
     try{ const r=await fetch(`https://api.telegram.org/bot${bot.token}/sendPhoto`,{ method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({ chat_id:chat, photo, caption:isI?capI:cap }) }); if(r.ok){ sent++; if(isI) sentIntl++; } else fail.push(r.status); }catch(e){ warn("cardBroadcast",e); fail.push("hata"); } }
+      body:JSON.stringify({ chat_id:chat, photo, caption:isI?capI:(en.has(chat)?capEn:cap) }) }); if(r.ok){ sent++; if(isI) sentIntl++; } else fail.push(r.status); }catch(e){ warn("cardBroadcast",e); fail.push("hata"); } }
   return { sent, sent_intl:sentIntl, total:to.size, fail }; }
 async function botCfg(){ const [token,username,secret]=await Promise.all(["betfans_bot_token","betfans_bot_username","betfans_bot_secret"].map(getSetting)); return token&&username? { token, username, secret } : null; }
 async function botSend(bot,chat,text,extra={}){ try{ await fetch(`https://api.telegram.org/bot${bot.token}/sendMessage`,{ method:"POST", headers:{"Content-Type":"application/json"},
@@ -1198,43 +1198,62 @@ async function resetPassword(req,b){ if(!(await allow("rp:"+clientIp(req),3600,1
   const {data:id}=await sb().rpc("bahis_token_consume",{th:await sha256hex(String(b.token||"")),k:"reset"}); if(!id) return J({ error:"Bağlantı geçersiz ya da süresi dolmuş." },400);
   await sb().rpc("bahis_member_update",{i:id,p:{pass_hash:await hashPassword(String(b.password))}}); return J({ ok:true }); }
 
+// Bot dili (2026-09-30): yanitlarda Telegram uygulama dili (language_code tr* -> tr, digeri en); sistem mesajlarinda uye telefonu (+90 -> tr).
+// Komutlar: /sifre|/reset, /durdur|/stop, /baslat|/resume.
+const BOT_T={
+  tr:{expired:"Bağlantının süresi dolmuş. bet-fans.com'da giriş yapıp yeni bağlantı al.",hello:"Merhaba! Telefon numaranı doğrulamak için aşağıdaki düğmeye bas.",shareBtn:"📱 Numaramı paylaş",
+      about:"BetFans botu: üyelik doğrulama, şifre sıfırlama (/sifre) ve bildirimler. Kayıt: https://bet-fans.com",signupFirst:"Önce bet-fans.com'dan kayıt ol ve oradaki Telegram bağlantısını kullan.",
+      ownNumber:"Lütfen kendi numaranı paylaş.",badNumber:"Numara okunamadı.",verified:"✅ Numaran doğrulandı.",verifiedPending:"✅ Numaran doğrulandı. Üyeliğin onaylanınca buradan haber vereceğim.",
+      notLinked:"Bu Telegram hesabı bir BetFans üyeliğine bağlı değil.",cardsOn:"🔔 Tutan tahmin kartları açıldı. Kapatmak için /durdur yaz.",cardsOff:"🔕 Tutan tahmin kartları kapatıldı. Yeniden açmak için /baslat yaz.",
+      reset:"Şifreni sıfırlamak için (30 dk geçerli):\n{url}",help:"Komutlar:\n/sifre — şifre sıfırlama bağlantısı\n/durdur — tutan tahmin kartlarını kapat\n/baslat — tutan tahmin kartlarını aç\nSite: https://bet-fans.com",
+      approved:"✅ BetFans üyeliğin onaylandı. Tahminler: https://bet-fans.com",rejected:"BetFans üyelik başvurun onaylanmadı."},
+  en:{expired:"This link has expired. Log in at bet-fans.com to get a new one.",hello:"Hi! Tap the button below to verify your phone number.",shareBtn:"📱 Share my number",
+      about:"BetFans bot: membership verification, password reset (/reset) and notifications. Sign up: https://bet-fans.com",signupFirst:"Please sign up at bet-fans.com first and use the Telegram link there.",
+      ownNumber:"Please share your own number.",badNumber:"Could not read the number.",verified:"✅ Your number is verified.",verifiedPending:"✅ Your number is verified. I will let you know here once your membership is approved.",
+      notLinked:"This Telegram account is not linked to a BetFans membership.",cardsOn:"🔔 Winning pick cards are on. Send /stop to turn them off.",cardsOff:"🔕 Winning pick cards are off. Send /resume to turn them back on.",
+      reset:"Reset your password (valid for 30 min):\n{url}",help:"Commands:\n/reset — password reset link\n/stop — turn off winning pick cards\n/resume — turn on winning pick cards\nSite: https://bet-fans.com",
+      approved:"✅ Your BetFans membership is approved. Picks: https://bet-fans.com",rejected:"Your BetFans membership application was not approved."} };
+const phoneLang=(ph)=>(!ph||String(ph).startsWith("+90"))?"tr":"en";
+const tgLang=(from,ph)=>{ const lc=String((from&&from.language_code)||""); return lc? (lc.startsWith("tr")?"tr":"en") : phoneLang(ph); };
+const BOT_COMMANDS_EN=[{ command:"reset", description:"Password reset link" },{ command:"stop", description:"Turn off winning pick cards" },{ command:"resume", description:"Turn on winning pick cards" },{ command:"start", description:"Start" }];
 // Yonetici onay/ret baglantisi (Telegram mesajindan, GET, HMAC imzali)
 async function memberDecision(u){ const id=u.searchParams.get("id")||"", act=u.searchParams.get("act")||"", s=u.searchParams.get("s")||"";
   if(!ADMIN_KEY||!["approved","rejected","deleted"].includes(act)||!safeEq(s,await hmacHex(ADMIN_KEY,id+":"+act))) return toSite("gecersiz");
   const {data}=await sb().rpc("bahis_member_by_id",{i:id}); const m=data&&data[0]; if(!m) return toSite("yok");
   if(act==="deleted"){ await sb().rpc("bahis_member_delete",{i:id}); return toSite("silindi"); } // kalici: uye + oturum/jetonlar (cascade)
   await sb().rpc("bahis_member_update",{i:id,p:{status:act}});
-  const bot=await botCfg(); if(bot&&m.tg_chat_id) await botSend(bot,m.tg_chat_id, act==="approved"? "✅ BetFans üyeliğin onaylandı. Tahminler: https://bet-fans.com" : "BetFans üyelik başvurun onaylanmadı.");
+  const bot=await botCfg(); if(bot&&m.tg_chat_id) await botSend(bot,m.tg_chat_id, BOT_T[phoneLang(m.phone)][act==="approved"?"approved":"rejected"]);
   return toSite(act==="approved"? "onaylandi" : "reddedildi"); }
 
 // BetFans Telegram botu webhook'u: /start <jeton> -> hesabi bagla, numara iste; kisi paylasimi -> telefon dogrulandi; /sifre -> sifirlama baglantisi
 async function tgWebhook(req){ const bot=await botCfg(); if(!bot||!bot.secret||!safeEq(req.headers.get("x-telegram-bot-api-secret-token"),bot.secret)) return new Response("no",{status:401});
   let up={}; try{ up=await req.json(); }catch(_){ return new Response("ok"); }
   const msg=up.message; if(!msg||!msg.chat||msg.chat.type!=="private") return new Response("ok"); const chat=msg.chat.id, text=String(msg.text||"").trim();
-  console.log("tg update:", msg.contact? "contact" : text.startsWith("/start")? (text.includes(" ")? "start+token" : "start") : text.startsWith("/sifre")? "sifre" : /^\/(durdur|baslat)/.test(text)? text.slice(1,7) : (text? "text" : "other")); // teshis, kisisel veri yok
-  const shareKb={ reply_markup:{ keyboard:[[{ text:"📱 Numaramı paylaş", request_contact:true }]], one_time_keyboard:true, resize_keyboard:true } };
+  console.log("tg update:", msg.contact? "contact" : text.startsWith("/start")? (text.includes(" ")? "start+token" : "start") : /^\/(sifre|reset)/.test(text)? "sifre" : /^\/(durdur|baslat|stop|resume)/.test(text)? text.slice(1,7) : (text? "text" : "other")); // teshis, kisisel veri yok
+  let L=BOT_T[tgLang(msg.from)];
+  const shareKb={ reply_markup:{ keyboard:[[{ text:L.shareBtn, request_contact:true }]], one_time_keyboard:true, resize_keyboard:true } };
   if(text.startsWith("/start")){ const tok=text.split(/\s+/)[1];
     if(tok){ const {data:id}=await sb().rpc("bahis_token_consume",{th:await sha256hex(tok),k:"tg_link"});
-      if(!id){ await botSend(bot,chat,"Bağlantının süresi dolmuş. bet-fans.com'da giriş yapıp yeni bağlantı al."); return new Response("ok"); }
+      if(!id){ await botSend(bot,chat,L.expired); return new Response("ok"); }
       await sb().rpc("bahis_member_update",{i:id,p:{tg_chat_id:chat}});
-      await botSend(bot,chat,"Merhaba! Telefon numaranı doğrulamak için aşağıdaki düğmeye bas.",shareKb); }
-    else await botSend(bot,chat,"BetFans botu: üyelik doğrulama, şifre sıfırlama (/sifre) ve bildirimler. Kayıt: https://bet-fans.com");
+      await botSend(bot,chat,L.hello,shareKb); }
+    else await botSend(bot,chat,L.about);
     return new Response("ok"); }
-  const {data:mm}=await sb().rpc("bahis_member_by_chat",{c:chat}); const m=mm&&mm[0];
-  if(msg.contact){ if(!m){ await botSend(bot,chat,"Önce bet-fans.com'dan kayıt ol ve oradaki Telegram bağlantısını kullan."); return new Response("ok"); }
-    if(msg.contact.user_id!==msg.from.id){ console.log("tg contact: baskasinin numarasi"); await botSend(bot,chat,"Lütfen kendi numaranı paylaş.",shareKb); return new Response("ok"); }
-    const ph=normPhone("+"+String(msg.contact.phone_number).replace(/^\+/,"")); if(!ph){ await botSend(bot,chat,"Numara okunamadı."); return new Response("ok"); }
+  const {data:mm}=await sb().rpc("bahis_member_by_chat",{c:chat}); const m=mm&&mm[0]; L=BOT_T[tgLang(msg.from,m&&m.phone)];
+  if(msg.contact){ if(!m){ await botSend(bot,chat,L.signupFirst); return new Response("ok"); }
+    if(msg.contact.user_id!==msg.from.id){ console.log("tg contact: baskasinin numarasi"); await botSend(bot,chat,L.ownNumber,shareKb); return new Response("ok"); }
+    const ph=normPhone("+"+String(msg.contact.phone_number).replace(/^\+/,"")); if(!ph){ await botSend(bot,chat,L.badNumber); return new Response("ok"); }
     const first=!m.phone_verified; await sb().rpc("bahis_member_update",{i:m.id,p:{phone:ph,phone_verified:true}});
-    await botSend(bot,chat, m.status==="approved"? "✅ Numaran doğrulandı." : "✅ Numaran doğrulandı. Üyeliğin onaylanınca buradan haber vereceğim.",{ reply_markup:{ remove_keyboard:true } });
+    await botSend(bot,chat, m.status==="approved"? L.verified : L.verifiedPending,{ reply_markup:{ remove_keyboard:true } });
     if(first&&m.status==="pending") await notifyAdminSignup({ ...m, phone:ph, phone_verified:true });
     return new Response("ok"); }
-  if(text.startsWith("/durdur")||text.startsWith("/baslat")){ if(!m){ await botSend(bot,chat,"Bu Telegram hesabı bir BetFans üyeliğine bağlı değil."); return new Response("ok"); }
-    const on=text.startsWith("/baslat"); await sb().rpc("bahis_member_update",{i:m.id,p:{notify:on}});
-    await botSend(bot,chat, on? "🔔 Tutan tahmin kartları açıldı. Kapatmak için /durdur yaz." : "🔕 Tutan tahmin kartları kapatıldı. Yeniden açmak için /baslat yaz."); return new Response("ok"); }
-  if(text.startsWith("/sifre")){ if(!m){ await botSend(bot,chat,"Bu Telegram hesabı bir BetFans üyeliğine bağlı değil."); return new Response("ok"); }
+  if(/^\/(durdur|baslat|stop|resume)\b/.test(text)){ if(!m){ await botSend(bot,chat,L.notLinked); return new Response("ok"); }
+    const on=/^\/(baslat|resume)/.test(text); await sb().rpc("bahis_member_update",{i:m.id,p:{notify:on}});
+    await botSend(bot,chat, on? L.cardsOn : L.cardsOff); return new Response("ok"); }
+  if(/^\/(sifre|reset)\b/.test(text)){ if(!m){ await botSend(bot,chat,L.notLinked); return new Response("ok"); }
     const t=randomToken(); await sb().rpc("bahis_token_create",{th:await sha256hex(t),i:m.id,k:"reset",minutes:30});
-    await botSend(bot,chat,`Şifreni sıfırlamak için (30 dk geçerli):\nhttps://bet-fans.com/#reset=${t}`); return new Response("ok"); }
-  await botSend(bot,chat,"Komutlar:\n/sifre — şifre sıfırlama bağlantısı\n/durdur — tutan tahmin kartlarını kapat\n/baslat — tutan tahmin kartlarını aç\nSite: https://bet-fans.com"); return new Response("ok"); }
+    await botSend(bot,chat,L.reset.replace("{url}",`https://bet-fans.com/#reset=${t}`)); return new Response("ok"); }
+  await botSend(bot,chat,L.help); return new Response("ok"); }
 
 // Yonetici: BetFans botunu kur (anahtar yerel .env'den gelir, yanitta DONMEZ). getMe ile dogrular, ayarlara yazar, gizli imzali webhook + komutlar.
 const BOT_COMMANDS=[{ command:"sifre", description:"Şifre sıfırlama bağlantısı" },{ command:"durdur", description:"Tutan tahmin kartlarını kapat" },{ command:"baslat", description:"Tutan tahmin kartlarını aç" },{ command:"start", description:"Başla" }];
@@ -1247,7 +1266,8 @@ async function botSetup(b){ const token=String(b.token||"").trim();
   const wh=await (await fetch(`https://api.telegram.org/bot${token}/setWebhook`,{ method:"POST", headers:{"Content-Type":"application/json"},
     body:JSON.stringify({ url:FN_URL+"?tg=1", secret_token:secret, allowed_updates:["message"], drop_pending_updates:true }) })).json();
   await fetch(`https://api.telegram.org/bot${token}/setMyCommands`,{ method:"POST", headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({ commands:BOT_COMMANDS }) });
+    body:JSON.stringify({ commands:BOT_COMMANDS_EN }) });
+  await fetch(`https://api.telegram.org/bot${token}/setMyCommands`,{ method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ commands:BOT_COMMANDS, language_code:"tr" }) });
   return J({ ok:true, username:me.result.username, webhook:!!wh.ok, webhook_msg:wh.description||null }); }
 
 Deno.serve(async (req)=>{

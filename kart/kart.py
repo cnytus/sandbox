@@ -48,6 +48,21 @@ def pazar(code):
     return PAZAR.get(code)
 
 
+PAZAR_EN = {"1": "Home win", "X": "Draw", "2": "Away win", "O": "Over 2.5", "U": "Under 2.5", "BY": "BTTS yes", "BN": "BTTS no",
+            "DC1X": "Double chance 1X", "DCX2": "Double chance X2", "DC12": "Double chance 12", "DNB1": "Draw no bet 1", "DNB2": "Draw no bet 2",
+            "O15": "Over 1.5", "U35": "Under 3.5"}
+
+
+def pazar_en(code):
+    m = re.fullmatch(r"AH([12])@(.+)", code or "")
+    if m: return f"Asian hcp {m[1]} ({m[2]})"
+    m = re.fullmatch(r"([OU])@(.+)", code or "")
+    if m: return ("Over " if m[1] == "O" else "Under ") + m[2]
+    m = re.fullmatch(r"H([12])@(.+)", code or "")
+    if m: return f"Handicap {m[1]} ({m[2]})"
+    return PAZAR_EN.get(code) or pazar(code)
+
+
 def gun(r):
     """Maç günü (TR saati) -> date."""
     if r.get("commence_time"):
@@ -156,13 +171,18 @@ def telegram(r, name, intl=False):
         "Adil oran = 1 ÷ model olasılığı; bahis şirketi oranı değildir.", "",
         f"Tüm sonuçlar (tutmayanlar dahil): {SITE}", f"Paylaş: {url}", "18+ · Geçmiş sonuç garanti değildir.",
         "Bu bildirimleri kapatmak için /durdur yaz."])
-    msg = {"action": "card_broadcast", "f": name, "caption": cap}
+    cap_en = "\n".join([
+        "✅ WON!", f"{r['home']} – {r['away']}",
+        f"{pazar_en(r['market'])} · probability {round(100 * float(r['model_prob']))}% · fair odds {adil(r):.2f} · score {r.get('actual_score') or '-'}",
+        "Fair odds = 1 ÷ model probability; not a bookmaker's odds.", "",
+        f"All results (including misses): {SITE}", f"Share: {url}", "18+ · Past results are no guarantee.", "Send /stop to turn off these messages."])
+    msg = {"action": "card_broadcast", "f": name, "caption": cap, "caption_en": cap_en}
     if intl and r.get("odds"):
         msg["f_intl"] = name
         msg["caption_intl"] = "\n".join([
             "✅ WON!", f"{r['home']} – {r['away']}",
-            f"{pazar(r['market'])} · odds {float(r['odds']):.2f} · score {r.get('actual_score') or '-'}", "",
-            f"All results: {SITE}", "18+ · Past results are no guarantee.", "Stop: /durdur"])
+            f"{pazar_en(r['market'])} · odds {float(r['odds']):.2f} · score {r.get('actual_score') or '-'}", "",
+            f"All results: {SITE}", "18+ · Past results are no guarantee.", "Send /stop to turn off these messages."])
     body = json.dumps(msg).encode()
     req = urllib.request.Request(API, data=body, headers={"Content-Type": "application/json", "x-card-key": key})
     try:
