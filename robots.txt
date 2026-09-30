@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://bet-fans.com/sitemap.xml
