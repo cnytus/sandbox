@@ -132,7 +132,8 @@ def telegram(r, name):
     cap = "\n".join([
         "✅ TUTTU!", f"{r['home']} – {r['away']}",
         f"{pazar(r['market'])} · oran {float(r['odds']):.2f} · skor {r.get('actual_score') or '-'}", "",
-        f"Tüm sonuçlar (tutmayanlar dahil): {SITE}", f"Paylaş: {url}", "18+ · Geçmiş sonuç garanti değildir."])
+        f"Tüm sonuçlar (tutmayanlar dahil): {SITE}", f"Paylaş: {url}", "18+ · Geçmiş sonuç garanti değildir.",
+        "Bu bildirimleri kapatmak için /durdur yaz."])
     body = json.dumps({"action": "card_broadcast", "f": name, "caption": cap}).encode()
     req = urllib.request.Request(API, data=body, headers={"Content-Type": "application/json", "x-card-key": key})
     try:

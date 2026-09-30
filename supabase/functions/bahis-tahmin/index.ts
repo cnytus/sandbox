@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.20";
+const VERSION="10.21";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -1182,7 +1182,7 @@ async function memberDecision(u){ const id=u.searchParams.get("id")||"", act=u.s
 async function tgWebhook(req){ const bot=await botCfg(); if(!bot||!bot.secret||!safeEq(req.headers.get("x-telegram-bot-api-secret-token"),bot.secret)) return new Response("no",{status:401});
   let up={}; try{ up=await req.json(); }catch(_){ return new Response("ok"); }
   const msg=up.message; if(!msg||!msg.chat||msg.chat.type!=="private") return new Response("ok"); const chat=msg.chat.id, text=String(msg.text||"").trim();
-  console.log("tg update:", msg.contact? "contact" : text.startsWith("/start")? (text.includes(" ")? "start+token" : "start") : text.startsWith("/sifre")? "sifre" : (text? "text" : "other")); // teshis, kisisel veri yok
+  console.log("tg update:", msg.contact? "contact" : text.startsWith("/start")? (text.includes(" ")? "start+token" : "start") : text.startsWith("/sifre")? "sifre" : /^\/(durdur|baslat)/.test(text)? text.slice(1,7) : (text? "text" : "other")); // teshis, kisisel veri yok
   const shareKb={ reply_markup:{ keyboard:[[{ text:"📱 Numaramı paylaş", request_contact:true }]], one_time_keyboard:true, resize_keyboard:true } };
   if(text.startsWith("/start")){ const tok=text.split(/\s+/)[1];
     if(tok){ const {data:id}=await sb().rpc("bahis_token_consume",{th:await sha256hex(tok),k:"tg_link"});
@@ -1199,12 +1199,16 @@ async function tgWebhook(req){ const bot=await botCfg(); if(!bot||!bot.secret||!
     await botSend(bot,chat, m.status==="approved"? "✅ Numaran doğrulandı." : "✅ Numaran doğrulandı. Üyeliğin onaylanınca buradan haber vereceğim.",{ reply_markup:{ remove_keyboard:true } });
     if(first&&m.status==="pending") await notifyAdminSignup({ ...m, phone:ph, phone_verified:true });
     return new Response("ok"); }
+  if(text.startsWith("/durdur")||text.startsWith("/baslat")){ if(!m){ await botSend(bot,chat,"Bu Telegram hesabı bir BetFans üyeliğine bağlı değil."); return new Response("ok"); }
+    const on=text.startsWith("/baslat"); await sb().rpc("bahis_member_update",{i:m.id,p:{notify:on}});
+    await botSend(bot,chat, on? "🔔 Tutan tahmin kartları açıldı. Kapatmak için /durdur yaz." : "🔕 Tutan tahmin kartları kapatıldı. Yeniden açmak için /baslat yaz."); return new Response("ok"); }
   if(text.startsWith("/sifre")){ if(!m){ await botSend(bot,chat,"Bu Telegram hesabı bir BetFans üyeliğine bağlı değil."); return new Response("ok"); }
     const t=randomToken(); await sb().rpc("bahis_token_create",{th:await sha256hex(t),i:m.id,k:"reset",minutes:30});
     await botSend(bot,chat,`Şifreni sıfırlamak için (30 dk geçerli):\nhttps://bet-fans.com/#reset=${t}`); return new Response("ok"); }
-  await botSend(bot,chat,"Komutlar: /sifre — şifre sıfırlama bağlantısı. Site: https://bet-fans.com"); return new Response("ok"); }
+  await botSend(bot,chat,"Komutlar:\n/sifre — şifre sıfırlama bağlantısı\n/durdur — tutan tahmin kartlarını kapat\n/baslat — tutan tahmin kartlarını aç\nSite: https://bet-fans.com"); return new Response("ok"); }
 
 // Yonetici: BetFans botunu kur (anahtar yerel .env'den gelir, yanitta DONMEZ). getMe ile dogrular, ayarlara yazar, gizli imzali webhook + komutlar.
+const BOT_COMMANDS=[{ command:"sifre", description:"Şifre sıfırlama bağlantısı" },{ command:"durdur", description:"Tutan tahmin kartlarını kapat" },{ command:"baslat", description:"Tutan tahmin kartlarını aç" },{ command:"start", description:"Başla" }];
 async function botSetup(b){ const token=String(b.token||"").trim();
   if(!/^\d{6,12}:[A-Za-z0-9_-]{30,}$/.test(token)) return J({ error:"anahtar bicimi gecersiz" },400);
   const me=await (await fetch(`https://api.telegram.org/bot${token}/getMe`)).json(); if(!me.ok) return J({ error:"Telegram anahtari reddetti" },400);
@@ -1214,7 +1218,7 @@ async function botSetup(b){ const token=String(b.token||"").trim();
   const wh=await (await fetch(`https://api.telegram.org/bot${token}/setWebhook`,{ method:"POST", headers:{"Content-Type":"application/json"},
     body:JSON.stringify({ url:FN_URL+"?tg=1", secret_token:secret, allowed_updates:["message"], drop_pending_updates:true }) })).json();
   await fetch(`https://api.telegram.org/bot${token}/setMyCommands`,{ method:"POST", headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({ commands:[{ command:"sifre", description:"Şifre sıfırlama bağlantısı" },{ command:"start", description:"Başla" }] }) });
+    body:JSON.stringify({ commands:BOT_COMMANDS }) });
   return J({ ok:true, username:me.result.username, webhook:!!wh.ok, webhook_msg:wh.description||null }); }
 
 Deno.serve(async (req)=>{
