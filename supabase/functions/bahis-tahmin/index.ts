@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.23";
+const VERSION="10.24";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -1116,12 +1116,16 @@ const INTL_T={
   ar:{legendValue:"<span class='dot' style='background:var(--good)'></span><b>أفضل من سعر Pinnacle العادل بـ +{thr}% = قيمة</b>",srcPrice:"🏀 مقارنة الأسعار (Pinnacle العادل) · النتيجة تشمل الوقت الإضافي",stake:"مبلغ القسيمة",ret:"العائد المحتمل",totalOdds:"إجمالي الأودز",pinLbl:"Pinnacle",kellyLbl:"Kelly"} };
 async function intlOn(){ return String(await getSetting("intl_view")||"")==="true"; }
 const phoneIntl=(ph)=>!!ph&&/^\+\d{6,}$/.test(String(ph))&&!String(ph).startsWith("+90");
-async function intlFor(req,m){ try{
-  if(!m||m.status!=="approved"||!m.phone_verified||!(await intlOn())) return false;
-  const {data:mm}=await sb().rpc("bahis_member_by_id",{i:m.id}); const full=mm&&mm[0]; if(!full||!phoneIntl(full.phone)) return false;
-  const ip=clientIp(req); if(!ip||ip==="?") return false; // IP yoksa Turkiye say
-  const {data:isTr,error}=await sb().rpc("bahis_ip_is_tr",{ip}); if(error){ warn("ip_is_tr",error); return false; }
-  return isTr===false; }catch(e){ warn("intlFor",e); return false; } }
+async function intlFor(req,m){ let why="";
+  try{
+    if(!m||m.status!=="approved"||!m.phone_verified){ why="uye_onay_yok"; return false; }
+    if(!(await intlOn())){ why="ayar_kapali"; return false; }
+    const {data:mm}=await sb().rpc("bahis_member_by_id",{i:m.id}); const full=mm&&mm[0]; if(!full||!phoneIntl(full.phone)){ why="telefon_tr"; return false; }
+    const ip=clientIp(req); if(!ip||ip==="?"){ why="ip_yok"; return false; } // IP yoksa Turkiye say
+    const {data:isTr,error}=await sb().rpc("bahis_ip_is_tr",{ip}); if(error){ why="ip_sorgu_hata"; warn("ip_is_tr",error); return false; }
+    why=isTr===false?"yurtdisi":"ip_tr"; return isTr===false;
+  }catch(e){ why="hata"; warn("intlFor",e); return false; }
+  finally{ if(why&&why!=="uye_onay_yok"&&why!=="ayar_kapali") console.log("intl karar:",why); } } // teshis: IP/telefon loglanmaz
 const BOOK_KEYS=new Set(["book","books","books_used","bookmaker","bookmakers"]);
 function stripBooks(o){ if(Array.isArray(o)){ for(const x of o) stripBooks(x); } else if(o&&typeof o==="object"){ for(const k of Object.keys(o)){ if(BOOK_KEYS.has(k)) delete o[k]; else stripBooks(o[k]); } } return o; }
 const HIST_ODDS=["odds","odds_pinnacle","closing_odds","closing_odds_pinnacle"];
