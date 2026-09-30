@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.24";
+const VERSION="10.25";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -1268,6 +1268,8 @@ Deno.serve(async (req)=>{
     if(body.action==="card_broadcast"){ if(!CARD_KEY||req.headers.get("x-card-key")!==CARD_KEY) return J({ error:"yetkisiz" },401); return J(await cardBroadcast(body)); }
     if(body.action==="bot_setup") return await botSetup(body);
     if(body.action==="notify_pending"){ const {data}=await sb().rpc("bahis_members_pending"); for(const m of (data||[])) await notifyAdminSignup(m); return J({ ok:true, notified:(data||[]).length }); }
+    if(body.action==="geo"){ // varsayilan dil: Turkiye IP -> tr, digerleri en (belirsizlikte Turkiye); IP geri dondurulmez
+      const ip=clientIp(req); let tr=true; if(ip&&ip!=="?"){ try{ const {data,error}=await sb().rpc("bahis_ip_is_tr",{ip}); if(!error) tr=data!==false; }catch(e){ warn("geo",e); } } return J({ tr }); }
     if(body.action==="signup") return await signup(req,body);
     if(body.action==="login") return await login(req,body);
     if(body.action==="me") return await me(req);
