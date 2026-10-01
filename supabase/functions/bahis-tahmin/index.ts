@@ -1046,7 +1046,7 @@ function mktLabel(c){ let m=/^AH([12])@(.+)$/.exec(c||""); if(m) return "Asya Hn
   m=/^([OU])@(.+)$/.exec(c||""); if(m) return (m[1]==="O"?"Üst ":"Alt ")+m[2];
   m=/^H([12])@(.+)$/.exec(c||""); if(m) return "Hnd. MS "+m[1]+" ("+m[2]+")"; return MKN[c]||XMKN[c]||c; }
 async function getSetting(k){ try{ const {data,error}=await sb().rpc("bahis_get_setting",{k}); if(error) throw error; return data||null; }catch(e){ warn("setting "+k,e); return null; } }
-const tgParts=(text)=>{ const parts=[]; let cur=""; for(const ln of text.split("\n")){ if((cur+ln).length>3800){ parts.push(cur); cur=""; } cur+=ln+"\n"; } if(cur.trim()) parts.push(cur); return parts; };
+const tgParts=(text)=>{ const parts=[]; let cur=""; for(const ln of text.split("\n")){ if((cur+ln).length>3800){ parts.push(cur); cur=""; } cur+=ln+"\n"; } if(cur.trim()) parts.push(cur); return parts; };
 async function sendTelegram(text){
   // 2026-09-29: yonetici bildirimleri BetFans botundan (@Batfanbot; yonetici botu baslatti), yoksa JW botu (CCG Leads) yedek
   const tok=(await getSetting("betfans_bot_token"))||(await getSetting("telegram_bot_token")), chat=await getSetting("telegram_chat_id"); if(!tok||!chat) return { sent:0, reason:"ayar yok" };
@@ -1338,7 +1338,7 @@ Deno.serve(async (req)=>{
     if(body.action==="autosave") return J(await autosave({ sport:body.sport, extras:!!body.extras, since_min:body.since_min }));
     if(body.action==="collect_results") return J(await collectResults());
     if(body.action==="ah_scan") return J(await ahScan()); // kaydetmeden tarama (onbellegi gunceller)
-    if(body.action==="picks_notify") return J(await notifyNewPicks(new Date(Date.now()-Math.min(1440,Math.max(1,+body.since_min||60))*60000).toISOString(), true));
+    if(body.action==="picks_notify") return J(await notifyNewPicks(new Date(Date.now()-Math.min(1440,Math.max(1,+body.since_min||60))*60000).toISOString(), true));
     if(body.action==="tg_test") return J(await sendTelegram("✅ BetFans bildirim testi — yeni değer seçimleri buraya gelecek.\nhttps://bet-fans.com"));
     if(body.action==="capture_closing") return J(await captureClosing());
     if(body.action==="calibrate") return J(await calibrate());
