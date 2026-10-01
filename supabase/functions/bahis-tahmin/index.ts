@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.26";
+const VERSION="10.27";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -26,7 +26,7 @@ const FD_KEY=Deno.env.get("FOOTBALL_DATA_KEY")||"";
 // Yazan / pahali action'lar (settle, calibrate, backtest, ...) bu header'i ister. pg_cron komutlari da gonderir.
 const ADMIN_KEY=Deno.env.get("BAHIS_ADMIN_KEY")||"";
 const CARD_KEY=Deno.env.get("BETFANS_CARD_KEY")||""; // yalniz card_broadcast (sunucudaki kart betigi)
-const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe","fd_csv","odds_hist","tg_test","collect_results","ah_scan","bot_setup","notify_pending"]);
+const ADMIN_ACTIONS=new Set(["save","settle","autosave","capture_closing","calibrate","backtest","inj_debug","sportmonks_debug","fd_debug","markets_probe","fd_csv","odds_hist","tg_test","collect_results","ah_scan","bot_setup","notify_pending","picks_notify"]);
 // FOOTBALL_DATA_KEY zorunlu degil (CSV birincil form kaynagi; FD yalniz yedek + Dunya Kupasi formu)
 const MISSING_ENV=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","ODDS_API_KEY"].filter((k)=>!Deno.env.get(k));
 // Tani: hangi secret'lar tanimli (degerler asla donmez)
@@ -1046,20 +1046,47 @@ function mktLabel(c){ let m=/^AH([12])@(.+)$/.exec(c||""); if(m) return "Asya Hn
   m=/^([OU])@(.+)$/.exec(c||""); if(m) return (m[1]==="O"?"Üst ":"Alt ")+m[2];
   m=/^H([12])@(.+)$/.exec(c||""); if(m) return "Hnd. MS "+m[1]+" ("+m[2]+")"; return MKN[c]||XMKN[c]||c; }
 async function getSetting(k){ try{ const {data,error}=await sb().rpc("bahis_get_setting",{k}); if(error) throw error; return data||null; }catch(e){ warn("setting "+k,e); return null; } }
+const tgParts=(text)=>{ const parts=[]; let cur=""; for(const ln of text.split("\n")){ if((cur+ln).length>3800){ parts.push(cur); cur=""; } cur+=ln+"\n"; } if(cur.trim()) parts.push(cur); return parts; };
 async function sendTelegram(text){
   // 2026-09-29: yonetici bildirimleri BetFans botundan (@Batfanbot; yonetici botu baslatti), yoksa JW botu (CCG Leads) yedek
   const tok=(await getSetting("betfans_bot_token"))||(await getSetting("telegram_bot_token")), chat=await getSetting("telegram_chat_id"); if(!tok||!chat) return { sent:0, reason:"ayar yok" };
-  const parts=[]; let cur=""; for(const ln of text.split("\n")){ if((cur+ln).length>3800){ parts.push(cur); cur=""; } cur+=ln+"\n"; } if(cur.trim()) parts.push(cur);
-  let sent=0; for(const t of parts){ try{ const r=await fetch(`https://api.telegram.org/bot${tok}/sendMessage`,{ method:"POST", headers:{"Content-Type":"application/json"},
+  let sent=0; for(const t of tgParts(text)){ try{ const r=await fetch(`https://api.telegram.org/bot${tok}/sendMessage`,{ method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({ chat_id:chat, text:t, disable_web_page_preview:true }) }); if(r.ok) sent++; else warn("telegram HTTP",r.status); }catch(e){ warn("telegram",e); } }
   return { sent }; }
 const trTime=(iso)=>{ try{ return new Date(iso).toLocaleString("tr-TR",{ timeZone:"Europe/Istanbul", weekday:"short", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" }); }catch(_){ return String(iso).slice(0,16).replace("T"," "); } };
-async function notifyNewPicks(since){ try{
+// Yeni secimler uyelere de (2026-10-01; once yalniz yoneticiye gidiyordu). Uyum (7258 md.5): oran/sirket adi YOK, olasilik + adil oran.
+// Dil telefona gore (+90 -> tr). Hedef: bahis_member_push_targets (onayli + Telegram bagli + notify); yonetici sohbeti atlanir (yonetici ozeti ayri).
+const LG_EN={ ...LG_TR, soccer_turkey_super_league:"Super Lig", soccer_uefa_champs_league:"Champions League", soccer_portugal_primeira_liga:"Portugal", soccer_spl:"Scotland" };
+const MKN_EN={ "1":"Home win","X":"Draw","2":"Away win","O":"Over 2.5","U":"Under 2.5","BY":"BTTS Yes","BN":"BTTS No", DC1X:"Double chance 1X", DCX2:"Double chance X2", DC12:"Double chance 12", DNB1:"Draw no bet 1", DNB2:"Draw no bet 2", O15:"Over 1.5", U35:"Under 3.5" };
+function mktLabelEn(c){ let m=/^AH([12])@(.+)$/.exec(c||""); if(m) return "Asian hcp "+m[1]+" ("+m[2]+")";
+  m=/^([OU])@(.+)$/.exec(c||""); if(m) return (m[1]==="O"?"Over ":"Under ")+m[2];
+  m=/^H([12])@(.+)$/.exec(c||""); if(m) return "Hcp "+m[1]+" ("+m[2]+")"; return MKN_EN[c]||c; }
+const enTime=(iso)=>{ try{ return new Date(iso).toLocaleString("en-GB",{ timeZone:"UTC", weekday:"short", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" })+" UTC"; }catch(_){ return String(iso).slice(0,16).replace("T"," "); } };
+function memberPicksText(rows,lang){ const tr=lang==="tr";
+  const L=[tr? `🎯 BetFans — ${rows.length} yeni tahmin` : `🎯 BetFans — ${rows.length} new pick${rows.length>1?"s":""}`];
+  for(const r of rows){ const p=+r.model_prob; const ok=p>0&&p<1;
+    const pr=ok? (tr? "%"+(p*100).toFixed(1).replace(".",",") : (p*100).toFixed(1)+"%") : "";
+    const fo=ok? (tr? (1/p).toFixed(2).replace(".",",") : (1/p).toFixed(2)) : "";
+    L.push(`${tr?trTime(r.commence_time):enTime(r.commence_time)} · ${(tr?LG_TR:LG_EN)[r.sport]||r.sport}\n${r.home} – ${r.away}\n➡️ ${tr?mktLabel(r.market):mktLabelEn(r.market)}`+
+      (ok? (tr? ` · olasılık ${pr} · adil oran ${fo}` : ` · probability ${pr} · fair odds ${fo}`) : "")); }
+  L.push(tr? "https://bet-fans.com\n18+ · Tahminler garanti değildir. Bildirimleri kapatmak için /durdur" : "https://bet-fans.com\n18+ · Picks are not guaranteed. Send /stop to turn off notifications.");
+  return L.join("\n\n"); }
+async function notifyMembers(rows){ const bot=await botCfg(); if(!bot) return { sent:0, reason:"bot ayari yok" };
+  const {data,error}=await sb().rpc("bahis_member_push_targets"); if(error) return { sent:0, error:error.message };
+  const admin=String(await getSetting("telegram_chat_id")||""); const txt={ tr:memberPicksText(rows,"tr"), en:memberPicksText(rows,"en") };
+  let sent=0, total=0; const fail=[]; const seen=new Set();
+  for(const r of (data||[])){ const chat=String(r.tg_chat_id); if(!chat||chat===admin||seen.has(chat)) continue; seen.add(chat); total++; let ok=true;
+    for(const t of tgParts(txt[phoneLang(r.phone)])){ try{ const x=await fetch(`https://api.telegram.org/bot${bot.token}/sendMessage`,{ method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ chat_id:chat, text:t, disable_web_page_preview:true }) }); if(!x.ok){ ok=false; fail.push(x.status); } }catch(e){ ok=false; warn("notifyMembers",e); fail.push("hata"); } }
+    if(ok) sent++; }
+  return { sent, total, fail }; }
+async function notifyNewPicks(since,membersOnly=false){ try{
   const {data:rows,error}=await sb().rpc("bahis_recent_autosave",{since}); if(error) throw error; if(!rows||!rows.length) return { sent:0, picks:0 };
   const lines=[`🎯 BetFans — ${rows.length} yeni değer seçimi`];
   for(const r of rows) lines.push(`${trTime(r.commence_time)} · ${LG_TR[r.sport]||r.sport}\n${r.home} – ${r.away}\n➡️ ${mktLabel(r.market)}${r.pin_edge_pct!=null?` · değer sinyali +%${(+r.pin_edge_pct).toFixed(1)}`:""}`); // uyum 2026-09-30: oran/sirket adi yok
   lines.push("https://bet-fans.com");
-  return { ...(await sendTelegram(lines.join("\n\n"))), picks:rows.length };
+  const admin=membersOnly? { sent:0, skipped:true } : await sendTelegram(lines.join("\n\n"));
+  return { ...admin, picks:rows.length, members:await notifyMembers(rows) };
 }catch(e){ warn("notifyNewPicks",e); return { sent:0, error:String(e) }; } }
 
 // 2026-09-29: tek cagrida 13 lig CPU sinirini asiyordu (WORKER_RESOURCE_LIMIT, 14.09'dan beri kayit yok).
@@ -1204,18 +1231,18 @@ const BOT_T={
   tr:{expired:"Bağlantının süresi dolmuş. bet-fans.com'da giriş yapıp yeni bağlantı al.",hello:"Merhaba! Telefon numaranı doğrulamak için aşağıdaki düğmeye bas.",shareBtn:"📱 Numaramı paylaş",
       about:"BetFans botu: üyelik doğrulama, şifre sıfırlama (/sifre) ve bildirimler. Kayıt: https://bet-fans.com",signupFirst:"Önce bet-fans.com'dan kayıt ol ve oradaki Telegram bağlantısını kullan.",
       ownNumber:"Lütfen kendi numaranı paylaş.",badNumber:"Numara okunamadı.",verified:"✅ Numaran doğrulandı.",verifiedPending:"✅ Numaran doğrulandı. Üyeliğin onaylanınca buradan haber vereceğim.",
-      notLinked:"Bu Telegram hesabı bir BetFans üyeliğine bağlı değil.",cardsOn:"🔔 Tutan tahmin kartları açıldı. Kapatmak için /durdur yaz.",cardsOff:"🔕 Tutan tahmin kartları kapatıldı. Yeniden açmak için /baslat yaz.",
-      reset:"Şifreni sıfırlamak için (30 dk geçerli):\n{url}",help:"Komutlar:\n/sifre — şifre sıfırlama bağlantısı\n/durdur — tutan tahmin kartlarını kapat\n/baslat — tutan tahmin kartlarını aç\nSite: https://bet-fans.com",
+      notLinked:"Bu Telegram hesabı bir BetFans üyeliğine bağlı değil.",cardsOn:"🔔 Bildirimler açıldı (yeni tahminler + tutan kartları). Kapatmak için /durdur yaz.",cardsOff:"🔕 Bildirimler kapatıldı. Yeniden açmak için /baslat yaz.",
+      reset:"Şifreni sıfırlamak için (30 dk geçerli):\n{url}",help:"Komutlar:\n/sifre — şifre sıfırlama bağlantısı\n/durdur — bildirimleri kapat\n/baslat — bildirimleri aç\nSite: https://bet-fans.com",
       approved:"✅ BetFans üyeliğin onaylandı. Tahminler: https://bet-fans.com",rejected:"BetFans üyelik başvurun onaylanmadı."},
   en:{expired:"This link has expired. Log in at bet-fans.com to get a new one.",hello:"Hi! Tap the button below to verify your phone number.",shareBtn:"📱 Share my number",
       about:"BetFans bot: membership verification, password reset (/reset) and notifications. Sign up: https://bet-fans.com",signupFirst:"Please sign up at bet-fans.com first and use the Telegram link there.",
       ownNumber:"Please share your own number.",badNumber:"Could not read the number.",verified:"✅ Your number is verified.",verifiedPending:"✅ Your number is verified. I will let you know here once your membership is approved.",
-      notLinked:"This Telegram account is not linked to a BetFans membership.",cardsOn:"🔔 Winning pick cards are on. Send /stop to turn them off.",cardsOff:"🔕 Winning pick cards are off. Send /resume to turn them back on.",
-      reset:"Reset your password (valid for 30 min):\n{url}",help:"Commands:\n/reset — password reset link\n/stop — turn off winning pick cards\n/resume — turn on winning pick cards\nSite: https://bet-fans.com",
+      notLinked:"This Telegram account is not linked to a BetFans membership.",cardsOn:"🔔 Notifications are on (new picks + winning cards). Send /stop to turn them off.",cardsOff:"🔕 Notifications are off. Send /resume to turn them back on.",
+      reset:"Reset your password (valid for 30 min):\n{url}",help:"Commands:\n/reset — password reset link\n/stop — turn off notifications\n/resume — turn on notifications\nSite: https://bet-fans.com",
       approved:"✅ Your BetFans membership is approved. Picks: https://bet-fans.com",rejected:"Your BetFans membership application was not approved."} };
 const phoneLang=(ph)=>(!ph||String(ph).startsWith("+90"))?"tr":"en";
 const tgLang=(from,ph)=>{ const lc=String((from&&from.language_code)||""); return lc? (lc.startsWith("tr")?"tr":"en") : phoneLang(ph); };
-const BOT_COMMANDS_EN=[{ command:"reset", description:"Password reset link" },{ command:"stop", description:"Turn off winning pick cards" },{ command:"resume", description:"Turn on winning pick cards" },{ command:"start", description:"Start" }];
+const BOT_COMMANDS_EN=[{ command:"reset", description:"Password reset link" },{ command:"stop", description:"Turn off notifications" },{ command:"resume", description:"Turn on notifications" },{ command:"start", description:"Start" }];
 // Yonetici onay/ret baglantisi (Telegram mesajindan, GET, HMAC imzali)
 async function memberDecision(u){ const id=u.searchParams.get("id")||"", act=u.searchParams.get("act")||"", s=u.searchParams.get("s")||"";
   if(!ADMIN_KEY||!["approved","rejected","deleted"].includes(act)||!safeEq(s,await hmacHex(ADMIN_KEY,id+":"+act))) return toSite("gecersiz");
@@ -1256,7 +1283,7 @@ async function tgWebhook(req){ const bot=await botCfg(); if(!bot||!bot.secret||!
   await botSend(bot,chat,L.help); return new Response("ok"); }
 
 // Yonetici: BetFans botunu kur (anahtar yerel .env'den gelir, yanitta DONMEZ). getMe ile dogrular, ayarlara yazar, gizli imzali webhook + komutlar.
-const BOT_COMMANDS=[{ command:"sifre", description:"Şifre sıfırlama bağlantısı" },{ command:"durdur", description:"Tutan tahmin kartlarını kapat" },{ command:"baslat", description:"Tutan tahmin kartlarını aç" },{ command:"start", description:"Başla" }];
+const BOT_COMMANDS=[{ command:"sifre", description:"Şifre sıfırlama bağlantısı" },{ command:"durdur", description:"Bildirimleri kapat" },{ command:"baslat", description:"Bildirimleri aç" },{ command:"start", description:"Başla" }];
 async function botSetup(b){ const token=String(b.token||"").trim();
   if(!/^\d{6,12}:[A-Za-z0-9_-]{30,}$/.test(token)) return J({ error:"anahtar bicimi gecersiz" },400);
   const me=await (await fetch(`https://api.telegram.org/bot${token}/getMe`)).json(); if(!me.ok) return J({ error:"Telegram anahtari reddetti" },400);
@@ -1311,6 +1338,7 @@ Deno.serve(async (req)=>{
     if(body.action==="autosave") return J(await autosave({ sport:body.sport, extras:!!body.extras, since_min:body.since_min }));
     if(body.action==="collect_results") return J(await collectResults());
     if(body.action==="ah_scan") return J(await ahScan()); // kaydetmeden tarama (onbellegi gunceller)
+    if(body.action==="picks_notify") return J(await notifyNewPicks(new Date(Date.now()-Math.min(1440,Math.max(1,+body.since_min||60))*60000).toISOString(), true));
     if(body.action==="tg_test") return J(await sendTelegram("✅ BetFans bildirim testi — yeni değer seçimleri buraya gelecek.\nhttps://bet-fans.com"));
     if(body.action==="capture_closing") return J(await captureClosing());
     if(body.action==="calibrate") return J(await calibrate());
