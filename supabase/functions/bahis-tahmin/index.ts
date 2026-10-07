@@ -11,12 +11,12 @@
 // v9.x) CSV source (T1 + SoT blend); DC ratings; rest; steam. v8.x/v7 in git history.
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { hashPassword, verifyPassword, randomToken, sha256hex, hmacHex, safeEq, validEmail, normPhone, validPassword } from "./auth.ts";
-import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick, fitMu, sideWP, lineResult, lineQuotes, parseLine, bestLineRaw, basketElo, eloPredict, ahResult, ahBest } from "./model.ts";
+import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick, fitMu, sideWP, lineResult, lineQuotes, parseLine, bestLineRaw, basketElo, eloPredict, ahResult, ahBest, onePick } from "./model.ts";
 
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.27";
+const VERSION="10.28";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -609,6 +609,7 @@ async function fetchFixtures(sport,pub=false){
   if(totK>15) for(const m of pk) m.pick.kelly_pct=+(m.pick.kelly_pct*15/totK).toFixed(1);
   try{ const {data:ahm}=await sb().rpc("bahis_get_odds_cache",{sp:"ah:"+sport,max_age_seconds:36*3600}); // gunluk Asya handikabi taramasi
     if(ahm&&typeof ahm==="object") for(const m of out){ const x=!m.live&&ahm[norm(m.home)+"|"+norm(m.away)]; if(x) m.ahpick=x; } }catch(e){ warn("ah cache",e); }
+  for(const m of out) onePick(m);
   return { matches:out, count:out.length, form_count:formCount, params_version:params.version, rho:params.rho, league_x12s:x12s, halflife_days:halflife, injury_signal:!!inj, edge_threshold_pct:+(params.edge_threshold_base*params.family_correction).toFixed(2), rule:"price_edge", extra_markets:true };
 }
 

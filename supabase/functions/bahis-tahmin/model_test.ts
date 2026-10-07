@@ -2,7 +2,7 @@
 // Calistir: npx deno test supabase/functions/bahis-tahmin/model_test.ts
 import { assert, assertEquals, assertAlmostEquals } from "jsr:@std/assert@1";
 import { probs, probsLite, shinDevig, median, norm, findKey, findPair, evalMkt, extraPick, dutchPrice, dnbPrice } from "./model.ts";
-import { ahResult, ahBest } from "./model.ts";
+import { ahResult, ahBest, onePick } from "./model.ts";
 import { basketElo, eloPredict, ELO_MEAN } from "./model.ts";
 import { Phi, overWP, fitMu, sideWP, lineResult } from "./model.ts";
 
@@ -129,4 +129,13 @@ Deno.test("Asya handikabi", () => {
     { key:"x", title:"X", markets:[{ key:"spreads", outcomes:[{name:"A",point:-0.5,price:2.10},{name:"B",point:0.5,price:1.75}] }] },
     { key:"y", title:"Y", markets:[{ key:"spreads", outcomes:[{name:"A",point:-0.75,price:2.60},{name:"B",point:0.75,price:1.50}] }] } ] };
   const b=ahBest(ev); assertEquals(b.code,"AH1@-0.5"); assertEquals(b.book,"X"); assert(Math.abs(b.e-0.05)<1e-6); // farkli cizgi (Y) yok sayilir
+});
+
+Deno.test("onePick: mac basina en yuksek fiyat-edge'li tek secim kalir", ()=>{
+  const m={ pick:{ value:true, pin_edge:2.3 }, xpick:{ pin_edge:2.27 }, ahpick:{ pin_edge:2.81 } };
+  onePick(m); assertEquals(m.pick.value, false); assertEquals(m.xpick, undefined); assertEquals(m.ahpick.pin_edge, 2.81);
+  const n={ pick:{ value:true, pin_edge:3.3 }, xpick:{ pin_edge:2.0 } };
+  onePick(n); assertEquals(n.pick.value, true); assertEquals(n.xpick, undefined);
+  const k={ pick:{ value:false, pin_edge:9 }, xpick:{ pin_edge:2.1 } }; // deger olmayan ana secim yarismaz
+  onePick(k); assertEquals(k.xpick.pin_edge, 2.1);
 });
