@@ -155,3 +155,9 @@ export function ahBest(ev,exch=/betfair_ex|matchbook/){ let pin=null; const offe
     for(const [side,price,p] of [["1",o.ph,pin.f[0]],["2",o.pa,pin.f[1]]]){ const e=price*p-1;
       if(!best||e>best.e) best={ code:"AH"+side+"@"+fmt(side==="1"? pin.L : -pin.L), price, book:o.book, p, e }; } }
   return best; }
+
+// Mac basina tek secim (2026-10-07): ayni maca ana secim + ek pazar + Asya hnd. dusuyordu (AH 0 = Beraberlikte Iade, ayni bahis iki kez).
+// En yuksek Pinnacle fiyat-edge'i kalir; digerleri gosterilmez/kaydedilmez. DB tarafinda bahis_save_predictions da mac basina tek satir yazar.
+export function onePick(m){ const c=[]; if(m.pick&&m.pick.value) c.push(["pick",m.pick.pin_edge]); if(m.xpick) c.push(["xpick",m.xpick.pin_edge]); if(m.ahpick) c.push(["ahpick",m.ahpick.pin_edge]);
+  if(c.length<2) return; const win=c.reduce((a,b)=>(+b[1]||-1)>(+a[1]||-1)?b:a)[0];
+  if(win!=="pick"&&m.pick) m.pick.value=false; if(win!=="xpick") delete m.xpick; if(win!=="ahpick") delete m.ahpick; }
