@@ -11,12 +11,12 @@
 // v9.x) CSV source (T1 + SoT blend); DC ratings; rest; steam. v8.x/v7 in git history.
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { hashPassword, verifyPassword, randomToken, sha256hex, hmacHex, safeEq, validEmail, normPhone, validPassword } from "./auth.ts";
-import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick, fitMu, sideWP, lineResult, lineQuotes, parseLine, bestLineRaw, basketElo, eloPredict, ahResult, ahBest, onePick } from "./model.ts";
+import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick, fitMu, sideWP, lineResult, lineQuotes, parseLine, bestLineRaw, basketElo, eloPredict, ahResult, ahBest, onePick, fairProb, tier } from "./model.ts";
 
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.28";
+const VERSION="10.29";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -83,7 +83,7 @@ const PIN_EDGE_MIN_PCT=2; // yalniz backtest cfg varsayilani; canli esik DB'den
 const PIN_EDGE_MAX_PCT=10;
 // Oran ust siniri (2026-09-26 backtest, 6 lig x 4 sezon, fiyat-edge %2): oran <=6 -> 927 bahis ROI +12; oran >6 -> 285 bahis ROI -30
 // (5/6 ligde negatif; CLV pozitif olsa da uzun oranlarda favori-uzun oran yanliligi gercek ROI'yi yutuyor). Kanit: IMPROVEMENT_PLAN 2g.
-const PIN_MAX_ODDS=6;
+const PIN_MAX_ODDS=5; // 2026-10-11: 6 -> 5 (kullanici karari; canlida 4+ oranli 22 secimin 22'si kaybetti, backtest'te tavan 4/6 ROI ayni)
 // Kalibrasyon esik tabani: 1.16 x family_correction 1.73 = %2 (fiyat-edge backtest esigi). Eski taban 3 (=%5.2) fiyat-edge
 // kuralinda her kalibrasyonda esigi geri yukseltip tum pick'leri kesiyordu (14.09-26.09 canli: 0 pick).
 const THR_BASE_MIN=1.16;
@@ -396,7 +396,7 @@ function buildAuto(home,away,mLh,mLa,odds,indep,rho,threshold,extra={},x12s=X12_
     // value = source!="market" (form/Elo var) VE fiyat-edge >= esik VE model karsi cikmiyor (edge >= 0)
     const value=source!=="market" && pinEdge!=null && pinEdge>=threshold && pinEdge<=PIN_EDGE_MAX_PCT && edge>=0 && odd<=PIN_MAX_ODDS;
     return { code:m,name:MKN[m],family:FAMILY[m],model:+(mod*100).toFixed(1),mkt:+(mkt*100).toFixed(1),edge:+(edge*100).toFixed(1),odds:odd,odds_pin:pinOdd,odds_pin_fair:pinFair?+pinFair.toFixed(3):null,pin_edge:pinEdge,book:(pin.book||{})[m]||null,value }; });
-  const best=markets.filter((x)=>x.value&&x.odds).sort((a,b)=>b.pin_edge-a.pin_edge)[0]||null;
+  const best=markets.filter((x)=>x.value&&x.odds).sort((a,b)=>((a.odds_pin_fair>1?a.odds_pin_fair:1e9)-(b.odds_pin_fair>1?b.odds_pin_fair:1e9))||(b.pin_edge-a.pin_edge))[0]||null; // 2026-10-11: en olasi deger secimi (once en yuksek edge)
   if(best&&best.odds&&best.odds>1){
     // Kelly olasiligi = Pinnacle ADIL olasiligi (fiyat-edge kurali: kazanc fiyattan gelir); model olasiligi yalniz Pinnacle yoksa.
     // Eski hal model olasiligini kullaniyordu -> fiyat-edge pick'lerinin cogunda Kelly 0 cikiyordu (2026-09-26 canli).
@@ -1063,12 +1063,13 @@ function mktLabelEn(c){ let m=/^AH([12])@(.+)$/.exec(c||""); if(m) return "Asian
   m=/^([OU])@(.+)$/.exec(c||""); if(m) return (m[1]==="O"?"Over ":"Under ")+m[2];
   m=/^H([12])@(.+)$/.exec(c||""); if(m) return "Hcp "+m[1]+" ("+m[2]+")"; return MKN_EN[c]||c; }
 const enTime=(iso)=>{ try{ return new Date(iso).toLocaleString("en-GB",{ timeZone:"UTC", weekday:"short", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" })+" UTC"; }catch(_){ return String(iso).slice(0,16).replace("T"," "); } };
+const TIER_T={ tr:{ fav:"⭐ Favori", mid:"⚖️ Dengeli", long:"🎲 Sürpriz" }, en:{ fav:"⭐ Favourite", mid:"⚖️ Balanced", long:"🎲 Long shot" } };
 function memberPicksText(rows,lang){ const tr=lang==="tr";
   const L=[tr? `🎯 BetFans — ${rows.length} yeni tahmin` : `🎯 BetFans — ${rows.length} new pick${rows.length>1?"s":""}`];
-  for(const r of rows){ const p=+r.model_prob; const ok=p>0&&p<1;
+  for(const r of rows){ const p=fairProb(r.odds,r.pin_edge_pct,r.model_prob)||0; const ok=p>0&&p<1; const tg=ok? TIER_T[tr?"tr":"en"][tier(p)]+" · " : "";
     const pr=ok? (tr? "%"+(p*100).toFixed(1).replace(".",",") : (p*100).toFixed(1)+"%") : "";
     const fo=ok? (tr? (1/p).toFixed(2).replace(".",",") : (1/p).toFixed(2)) : "";
-    L.push(`${tr?trTime(r.commence_time):enTime(r.commence_time)} · ${(tr?LG_TR:LG_EN)[r.sport]||r.sport}\n${r.home} – ${r.away}\n➡️ ${tr?mktLabel(r.market):mktLabelEn(r.market)}`+
+    L.push(`${tr?trTime(r.commence_time):enTime(r.commence_time)} · ${(tr?LG_TR:LG_EN)[r.sport]||r.sport}\n${r.home} – ${r.away}\n➡️ ${tg}${tr?mktLabel(r.market):mktLabelEn(r.market)}`+
       (ok? (tr? ` · olasılık ${pr} · adil oran ${fo}` : ` · probability ${pr} · fair odds ${fo}`) : "")); }
   L.push(tr? "https://bet-fans.com\n18+ · Tahminler garanti değildir. Bildirimleri kapatmak için /durdur" : "https://bet-fans.com\n18+ · Picks are not guaranteed. Send /stop to turn off notifications.");
   return L.join("\n\n"); }
@@ -1331,6 +1332,8 @@ Deno.serve(async (req)=>{
     if(body.action==="history"){ // uye olmayanlar yalniz sonuclanmis tahminleri gorur (bekleyen = guncel secim)
       const h=await getHistory(body.sport); const m=await sessionMember(req);
       if((!m||m.status!=="approved")&&h.rows) h.rows=h.rows.filter((r)=>r.result!=null);
+      // 2026-10-11: gosterilen olasilik secimin dayandigi ADIL olasilik (fiyat-edge satirlari); DB'deki model_prob degismez (kalibrasyon onu kullanir)
+      if(h.rows) h.rows=h.rows.map((r)=>{ const fp=fairProb(r.odds,r.pin_edge_pct,r.model_prob); return fp==null? r : { ...r, model_prob_raw:r.model_prob, model_prob:+fp.toFixed(4) }; });
       // Uyum (2026-09-30, 7258 md.5): yabanci bahis sirketi oranlari istemciye gonderilmez (olasilik/CLV yeterli)
       const svc=!!CARD_KEY&&req.headers.get("x-card-key")===CARD_KEY; const intl=svc? false : await intlFor(req,m);
       if(h.rows&&!svc&&!intl) h.rows=h.rows.map((r)=>{ const o={...r}; for(const k of HIST_ODDS) delete o[k]; return o; });

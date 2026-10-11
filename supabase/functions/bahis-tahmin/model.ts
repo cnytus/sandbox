@@ -157,7 +157,13 @@ export function ahBest(ev,exch=/betfair_ex|matchbook/){ let pin=null; const offe
   return best; }
 
 // Mac basina tek secim (2026-10-07): ayni maca ana secim + ek pazar + Asya hnd. dusuyordu (AH 0 = Beraberlikte Iade, ayni bahis iki kez).
-// En yuksek Pinnacle fiyat-edge'i kalir; digerleri gosterilmez/kaydedilmez. DB tarafinda bahis_save_predictions da mac basina tek satir yazar.
-export function onePick(m){ const c=[]; if(m.pick&&m.pick.value) c.push(["pick",m.pick.pin_edge]); if(m.xpick) c.push(["xpick",m.xpick.pin_edge]); if(m.ahpick) c.push(["ahpick",m.ahpick.pin_edge]);
-  if(c.length<2) return; const win=c.reduce((a,b)=>(+b[1]||-1)>(+a[1]||-1)?b:a)[0];
+// 2026-10-11 (kullanici karari): adaylarin hepsi zaten fiyat-edge esigini gecmis; aralarindan EN OLASI olan kalir (once en yuksek edge kaliyordu ->
+// 5.50 beraberlik, 1.22 Beraberlikte Iade'yi eziyordu). Esitlikte yuksek edge. DB tarafinda bahis_save_predictions da mac basina tek satir yazar.
+export function onePick(m){ const c=[]; if(m.pick&&m.pick.value) c.push(["pick", m.pick.odds_pin_fair>1? 100/m.pick.odds_pin_fair : +m.pick.model, m.pick.pin_edge]);
+  if(m.xpick) c.push(["xpick",+m.xpick.prob,m.xpick.pin_edge]); if(m.ahpick) c.push(["ahpick",+m.ahpick.prob,m.ahpick.pin_edge]);
+  if(c.length<2) return; const win=c.reduce((a,b)=>((+b[1]||0)>(+a[1]||0)||((+b[1]||0)===(+a[1]||0)&&(+b[2]||-1)>(+a[2]||-1)))?b:a)[0];
   if(win!=="pick"&&m.pick) m.pick.value=false; if(win!=="xpick") delete m.xpick; if(win!=="ahpick") delete m.ahpick; }
+// Gosterilen olasilik (2026-10-11): fiyat-edge secimi Pinnacle ADIL olasiligina dayanir = (1+edge)/oran; edge yoksa (eski model kurali) model olasiligi.
+export function fairProb(odds,pinEdgePct,modelProb){ const o=+odds, e=pinEdgePct==null? NaN : +pinEdgePct; const p=(o>1&&isFinite(e))? (1+e/100)/o : +modelProb; return (p>0&&p<1)? p : null; }
+// Secim tipi etiketi: fav >= %50, mid %30-50, long < %30 (uye "MS 1" gorunce bunun surpriz mi favori mi oldugunu bilsin).
+export function tier(p){ return p>=0.5? "fav" : p>=0.3? "mid" : "long"; }
