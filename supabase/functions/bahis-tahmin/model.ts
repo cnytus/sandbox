@@ -167,3 +167,14 @@ export function onePick(m){ const c=[]; if(m.pick&&m.pick.value) c.push(["pick",
 export function fairProb(odds,pinEdgePct,modelProb){ const o=+odds, e=pinEdgePct==null? NaN : +pinEdgePct; const p=(o>1&&isFinite(e))? (1+e/100)/o : +modelProb; return (p>0&&p<1)? p : null; }
 // Secim tipi etiketi: fav >= %50, mid %30-50, long < %30 (uye "MS 1" gorunce bunun surpriz mi favori mi oldugunu bilsin).
 export function tier(p){ return p>=0.5? "fav" : p>=0.3? "mid" : "long"; }
+
+// TFF cezali listesi (kart/tff.py -> tff_bans_set) ile mac eslestirme (2026-10-11). Odds API takim adi ("Gazişehir Gaziantep", "Erzurum BB")
+// TFF kulup adindan ("GAZİANTEP FUTBOL KULÜBÜ A.Ş.", "ERZURUMSPOR FK") farkli: anlamli bir kelimenin (>=4 harf) TFF adinda gecmesi yeter;
+// yanlis eslesmeyi IKI takimin da tutmasi + ayni mac gunu (Turkiye saati, UTC+3) sarti engeller.
+const BAN_STOP=new Set(["spor","futbol","kulubu","istanbul","sportif","faaliyetler"]);
+const banNorm=(x)=>String(x||"").replace(/ı/g,"i").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+export function teamHit(oddsName,tffName){ const t=banNorm(tffName); return banNorm(oddsName).split(/[^a-z0-9]+/).some((w)=>w.length>=4&&!BAN_STOP.has(w)&&t.includes(w)); }
+export function bansFor(home,away,commence,rows){ const ms=Date.parse(commence); if(!isFinite(ms)||!Array.isArray(rows)) return null;
+  const day=new Date(ms+3*3600000).toISOString().slice(0,10); const out={ home:[], away:[] };
+  for(const r of rows){ if(!r||r.date!==day||!teamHit(home,r.home)||!teamHit(away,r.away)) continue; out[r.club===r.home?"home":"away"].push({ n:r.player, t:r.type }); }
+  return (out.home.length||out.away.length)? out : null; }
