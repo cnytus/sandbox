@@ -11,12 +11,12 @@
 // v9.x) CSV source (T1 + SoT blend); DC ratings; rest; steam. v8.x/v7 in git history.
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { hashPassword, verifyPassword, randomToken, sha256hex, hmacHex, safeEq, validEmail, normPhone, validPassword } from "./auth.ts";
-import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick, fitMu, sideWP, lineResult, lineQuotes, parseLine, bestLineRaw, basketElo, eloPredict, ahResult, ahBest, onePick, fairProb, tier } from "./model.ts";
+import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, findPair, evalMkt, extraPick, fitMu, sideWP, lineResult, lineQuotes, parseLine, bestLineRaw, basketElo, eloPredict, ahResult, ahBest, onePick, fairProb, tier, bansFor } from "./model.ts";
 
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.30";
+const VERSION="10.31";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -610,6 +610,7 @@ async function fetchFixtures(sport,pub=false){
   try{ const {data:ahm}=await sb().rpc("bahis_get_odds_cache",{sp:"ah:"+sport,max_age_seconds:36*3600}); // gunluk Asya handikabi taramasi
     if(ahm&&typeof ahm==="object") for(const m of out){ const x=!m.live&&ahm[norm(m.home)+"|"+norm(m.away)]; if(x) m.ahpick=x; } }catch(e){ warn("ah cache",e); }
   for(const m of out) onePick(m);
+  if(sport===TFF_SPORT){ const br=await loadBans(); if(br) for(const m of out){ const b=!m.live&&bansFor(m.home,m.away,m.commence,br); if(b) m.bans=b; } }
   return { matches:out, count:out.length, form_count:formCount, params_version:params.version, rho:params.rho, league_x12s:x12s, halflife_days:halflife, injury_signal:!!inj, edge_threshold_pct:+(params.edge_threshold_base*params.family_correction).toFixed(2), rule:"price_edge", extra_markets:true };
 }
 
@@ -1063,6 +1064,20 @@ function mktLabelEn(c){ let m=/^AH([12])@(.+)$/.exec(c||""); if(m) return "Asian
   m=/^([OU])@(.+)$/.exec(c||""); if(m) return (m[1]==="O"?"Over ":"Under ")+m[2];
   m=/^H([12])@(.+)$/.exec(c||""); if(m) return "Hcp "+m[1]+" ("+m[2]+")"; return MKN_EN[c]||c; }
 const enTime=(iso)=>{ try{ return new Date(iso).toLocaleString("en-GB",{ timeZone:"UTC", weekday:"short", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" })+" UTC"; }catch(_){ return String(iso).slice(0,16).replace("T"," "); } };
+// Super Lig cezali oyuncular (2026-10-11): sunucudaki kart/tff.py gunde bir TFF ceza sorgusunu okur, tff_bans_set ile yukler (onbellek "tff:bans").
+// Yalniz BILGI: mac karti + Telegram; secim kuralina girmez. TFF sarti: kaynak gosterilir, ticari kullanilmaz (kart/tff.py basligi).
+const TFF_SPORT="soccer_turkey_super_league";
+async function loadBans(){ try{ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:"tff:bans",max_age_seconds:4*86400}); return (data&&Array.isArray(data.rows))? data.rows : null; }catch(e){ warn("loadBans",e); return null; } }
+async function tffBansSet(b){ const rows=Array.isArray(b.rows)? b.rows : null; if(!rows||rows.length>500) return { error:"gecersiz liste" };
+  if(!(+b.clubs>=15)) return { error:"eksik okuma: kulup "+(+b.clubs||0) }; // yarim okuma eski listeyi ezmesin
+  const S=(x)=>String(x??"").slice(0,80), out=[];
+  for(const r of rows){ if(!r||!/^\d{4}-\d{2}-\d{2}$/.test(String(r.date))||!["MEN","KK","SK"].includes(r.type)) continue;
+    out.push({ club:S(r.club), player:S(r.player), type:r.type, home:S(r.home), away:S(r.away), date:String(r.date) }); }
+  const {error}=await sb().rpc("bahis_set_odds_cache",{sp:"tff:bans",p:{ t:new Date().toISOString(), rows:out }}); if(error) return { error:error.message };
+  return { ok:true, rows:out.length }; }
+const BAN_T={ tr:{ lbl:"Cezalı", MEN:"men", KK:"kırmızı kart", SK:"sarı kart", src:"kaynak: TFF" }, en:{ lbl:"Suspended", MEN:"ban", KK:"red card", SK:"yellow cards", src:"source: TFF" } };
+function banLine(r,lang){ const b=r.bans; if(!b) return ""; const T=BAN_T[lang]; const side=(team,xs)=>xs.length? `${team}: ${xs.map((x)=>`${x.n} (${T[x.t]||x.t})`).join(", ")}` : "";
+  return `\n🚫 ${T.lbl} — ${[side(r.home,b.home),side(r.away,b.away)].filter(Boolean).join(" · ")} (${T.src})`; }
 const TIER_T={ tr:{ fav:"⭐ Favori", mid:"⚖️ Dengeli", long:"🎲 Sürpriz" }, en:{ fav:"⭐ Favourite", mid:"⚖️ Balanced", long:"🎲 Long shot" } };
 function memberPicksText(rows,lang){ const tr=lang==="tr";
   const L=[tr? `🎯 BetFans — ${rows.length} yeni tahmin` : `🎯 BetFans — ${rows.length} new pick${rows.length>1?"s":""}`];
@@ -1070,7 +1085,7 @@ function memberPicksText(rows,lang){ const tr=lang==="tr";
     const pr=ok? (tr? "%"+(p*100).toFixed(1).replace(".",",") : (p*100).toFixed(1)+"%") : "";
     const fo=ok? (tr? (1/p).toFixed(2).replace(".",",") : (1/p).toFixed(2)) : "";
     L.push(`${tr?trTime(r.commence_time):enTime(r.commence_time)} · ${(tr?LG_TR:LG_EN)[r.sport]||r.sport}\n${r.home} – ${r.away}\n➡️ ${tg}${tr?mktLabel(r.market):mktLabelEn(r.market)}`+
-      (ok? (tr? ` · olasılık ${pr} · adil oran ${fo}` : ` · probability ${pr} · fair odds ${fo}`) : "")); }
+      (ok? (tr? ` · olasılık ${pr} · adil oran ${fo}` : ` · probability ${pr} · fair odds ${fo}`) : "")+banLine(r,tr?"tr":"en")); }
   L.push(tr? "https://bet-fans.com\n18+ · Tahminler garanti değildir. Bildirimleri kapatmak için /durdur" : "https://bet-fans.com\n18+ · Picks are not guaranteed. Send /stop to turn off notifications.");
   return L.join("\n\n"); }
 async function broadcastText(txt){ const bot=await botCfg(); if(!bot) return { sent:0, reason:"bot ayari yok" };
@@ -1103,8 +1118,9 @@ async function withdrawCheck(){ try{
 }catch(e){ warn("withdrawCheck",e); return { n:0, error:String(e) }; } }
 async function notifyNewPicks(since,membersOnly=false){ try{
   const {data:rows,error}=await sb().rpc("bahis_recent_autosave",{since}); if(error) throw error; if(!rows||!rows.length) return { sent:0, picks:0 };
+  if(rows.some((r)=>r.sport===TFF_SPORT)){ const br=await loadBans(); if(br) for(const r of rows) if(r.sport===TFF_SPORT){ const b=bansFor(r.home,r.away,r.commence_time,br); if(b) r.bans=b; } }
   const lines=[`🎯 BetFans — ${rows.length} yeni değer seçimi`];
-  for(const r of rows) lines.push(`${trTime(r.commence_time)} · ${LG_TR[r.sport]||r.sport}\n${r.home} – ${r.away}\n➡️ ${mktLabel(r.market)}${r.pin_edge_pct!=null?` · değer sinyali +%${(+r.pin_edge_pct).toFixed(1)}`:""}`); // uyum 2026-09-30: oran/sirket adi yok
+  for(const r of rows) lines.push(`${trTime(r.commence_time)} · ${LG_TR[r.sport]||r.sport}\n${r.home} – ${r.away}\n➡️ ${mktLabel(r.market)}${r.pin_edge_pct!=null?` · değer sinyali +%${(+r.pin_edge_pct).toFixed(1)}`:""}${banLine(r,"tr")}`); // uyum 2026-09-30: oran/sirket adi yok
   lines.push("https://bet-fans.com");
   const admin=membersOnly? { sent:0, skipped:true } : await sendTelegram(lines.join("\n\n"));
   return { ...admin, picks:rows.length, members:await notifyMembers(rows) };
@@ -1333,6 +1349,7 @@ Deno.serve(async (req)=>{
     }
     if(body.action==="tr_ip_set"){ if(!CARD_KEY||req.headers.get("x-card-key")!==CARD_KEY) return J({ error:"yetkisiz" },401);
       const {data,error}=await sb().rpc("bahis_tr_ip_replace",{p:body.ranges||[]}); return error? J({ error:error.message },400) : J({ ok:true, ranges:data }); }
+    if(body.action==="tff_bans_set"){ if(!CARD_KEY||req.headers.get("x-card-key")!==CARD_KEY) return J({ error:"yetkisiz" },401); return J(await tffBansSet(body)); }
     if(body.action==="card_broadcast"){ if(!CARD_KEY||req.headers.get("x-card-key")!==CARD_KEY) return J({ error:"yetkisiz" },401); return J(await cardBroadcast(body)); }
     if(body.action==="bot_setup") return await botSetup(body);
     if(body.action==="notify_pending"){ const {data}=await sb().rpc("bahis_members_pending"); for(const m of (data||[])) await notifyAdminSignup(m); return J({ ok:true, notified:(data||[]).length }); }

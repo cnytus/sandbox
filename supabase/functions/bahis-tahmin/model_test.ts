@@ -2,7 +2,7 @@
 // Calistir: npx deno test supabase/functions/bahis-tahmin/model_test.ts
 import { assert, assertEquals, assertAlmostEquals } from "jsr:@std/assert@1";
 import { probs, probsLite, shinDevig, median, norm, findKey, findPair, evalMkt, extraPick, dutchPrice, dnbPrice } from "./model.ts";
-import { ahResult, ahBest, onePick, fairProb, tier } from "./model.ts";
+import { ahResult, ahBest, onePick, fairProb, tier, teamHit, bansFor } from "./model.ts";
 import { basketElo, eloPredict, ELO_MEAN } from "./model.ts";
 import { Phi, overWP, fitMu, sideWP, lineResult } from "./model.ts";
 
@@ -145,4 +145,17 @@ Deno.test("fairProb + tier: gosterilen olasilik secimin dayandigi sayi", ()=>{
   assertAlmostEquals(fairProb(4.90, 3.27, 0.188)!, 0.2108, 1e-3); // Rize: model %18,8 degil, adil %21,1
   assertEquals(fairProb(3.5, null, 0.41), 0.41); assertEquals(fairProb(null, 2, 1.2), null);
   assertEquals(tier(0.61), "fav"); assertEquals(tier(0.5), "fav"); assertEquals(tier(0.37), "mid"); assertEquals(tier(0.21), "long");
+});
+
+Deno.test("bansFor: TFF cezali listesi dogru maca ve dogru tarafa duser", ()=>{
+  const rows=[{ club:"ÇAYKUR RİZESPOR A.Ş.", player:"MIHAI-VALENTIN MIHAILA", type:"MEN", home:"ÇAYKUR RİZESPOR A.Ş.", away:"FENERBAHÇE A.Ş.", date:"2026-10-10" },
+    { club:"GALATASARAY A.Ş.", player:"LUCAS TORREIRA", type:"KK", home:"GENÇLERBİRLİĞİ", away:"GALATASARAY A.Ş.", date:"2026-10-17" }];
+  assertEquals(bansFor("Çaykur Rizespor","Fenerbahce","2026-10-10T17:00:00Z",rows), { home:[{ n:"MIHAI-VALENTIN MIHAILA", t:"MEN" }], away:[] });
+  assertEquals(bansFor("Genclerbirligi SK","Galatasaray","2026-10-17T16:00:00Z",rows)!.away[0].t, "KK");
+  assertEquals(bansFor("Çaykur Rizespor","Fenerbahce","2026-10-17T17:00:00Z",rows), null);   // baska gun
+  assertEquals(bansFor("Fenerbahce","Çaykur Rizespor","2026-10-10T17:00:00Z",rows), null);   // ev/deplasman ters
+  assertEquals(bansFor("Genclerbirligi SK","Galatasaray","2026-10-16T22:30:00Z",rows)!.away.length, 1); // 01:30 TSI = ertesi gun
+  for(const [o,t] of [["Gazişehir Gaziantep","GAZİANTEP FUTBOL KULÜBÜ A.Ş."],["Erzurum BB","ERZURUMSPOR FK"],["Amed SK","AMED SPORTİF FAALİYETLER"],["Torku Konyaspor","TÜMOSAN KONYASPOR"],
+    ["Basaksehir","İSTANBUL BAŞAKŞEHİR FK"],["Besiktas JK","BEŞİKTAŞ A.Ş."],["Çorum FK","ARCA ÇORUM FK"],["Goztepe","GÖZTEPE A.Ş."],["Eyüpspor","EYÜPSPOR"]]) assert(teamHit(o,t), o);
+  assert(!teamHit("Basaksehir","KASIMPAŞA A.Ş.")); assert(!teamHit("Samsunspor","TRABZONSPOR A.Ş.")); assert(!teamHit("Erzurum BB","EYÜPSPOR"));
 });
