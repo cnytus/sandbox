@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.29";
+const VERSION="10.30";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -733,7 +733,7 @@ async function captureClosing(){
       }
       if(updates.length){ const {data:n}=await sb().rpc("bahis_update_closing",{p:updates}); totalUpdated+=(n||0); details.push({sport:sp, updated:n||0}); }
     }
-    return { updated: totalUpdated, details };
+    return { updated: totalUpdated, details, withdrawn: totalUpdated? await withdrawCheck() : { n:0 } };
   }catch(e){ return {error:String(e)}; }
 }
 
@@ -1073,15 +1073,34 @@ function memberPicksText(rows,lang){ const tr=lang==="tr";
       (ok? (tr? ` · olasılık ${pr} · adil oran ${fo}` : ` · probability ${pr} · fair odds ${fo}`) : "")); }
   L.push(tr? "https://bet-fans.com\n18+ · Tahminler garanti değildir. Bildirimleri kapatmak için /durdur" : "https://bet-fans.com\n18+ · Picks are not guaranteed. Send /stop to turn off notifications.");
   return L.join("\n\n"); }
-async function notifyMembers(rows){ const bot=await botCfg(); if(!bot) return { sent:0, reason:"bot ayari yok" };
+async function broadcastText(txt){ const bot=await botCfg(); if(!bot) return { sent:0, reason:"bot ayari yok" };
   const {data,error}=await sb().rpc("bahis_member_push_targets"); if(error) return { sent:0, error:error.message };
-  const admin=String(await getSetting("telegram_chat_id")||""); const txt={ tr:memberPicksText(rows,"tr"), en:memberPicksText(rows,"en") };
+  const admin=String(await getSetting("telegram_chat_id")||"");
   let sent=0, total=0; const fail=[]; const seen=new Set();
   for(const r of (data||[])){ const chat=String(r.tg_chat_id); if(!chat||chat===admin||seen.has(chat)) continue; seen.add(chat); total++; let ok=true;
     for(const t of tgParts(txt[phoneLang(r.phone)])){ try{ const x=await fetch(`https://api.telegram.org/bot${bot.token}/sendMessage`,{ method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({ chat_id:chat, text:t, disable_web_page_preview:true }) }); if(!x.ok){ ok=false; fail.push(x.status); } }catch(e){ ok=false; warn("notifyMembers",e); fail.push("hata"); } }
+      body:JSON.stringify({ chat_id:chat, text:t, disable_web_page_preview:true }) }); if(!x.ok){ ok=false; fail.push(x.status); } }catch(e){ ok=false; warn("broadcastText",e); fail.push("hata"); } }
     if(ok) sent++; }
   return { sent, total, fail }; }
+const notifyMembers=(rows)=>broadcastText({ tr:memberPicksText(rows,"tr"), en:memberPicksText(rows,"en") });
+// Maca yakin geri cekme (2026-10-11): secimler maçtan 8 gune kadar once kaydediliyor; sonradan cikan haber (sakatlik, kadro, rotasyon)
+// Pinnacle fiyatina yansir. Kapanis yakalama (mac oncesi son 3 saat, saatlik) alinan fiyati guncel Pinnacle ADIL fiyatiyla olcer (clv_pin_pct);
+// bu <= -WITHDRAW_CLV_PCT ise secim geri cekilir ve uyelere bildirilir. Esik = giris esiginin (+%2) simetrigi.
+// Backtest (tools/fiyat_kurali_backtest.py geri; 23.129 mac, 4.832 bahis): geri cekilen 935 bahis ROI -%17,0, kalan 3.897 bahis +%7,7 (hepsi +%2,9).
+// Satir silinmez ve gercek sonucu DB'de kalir (kuralin ise yarayip yaramadigini olcmek icin); istemciye "void" + withdrawn olarak gider.
+const WITHDRAW_CLV_PCT=2;
+function withdrawText(rows,lang){ const tr=lang==="tr";
+  const L=[tr? `⚠️ BetFans — ${rows.length} tahmin geri çekildi` : `⚠️ BetFans — ${rows.length} pick${rows.length>1?"s":""} withdrawn`];
+  for(const r of rows) L.push(`${tr?trTime(r.commence_time):enTime(r.commence_time)} · ${(tr?LG_TR:LG_EN)[r.sport]||r.sport}\n${r.home} – ${r.away}\n↩️ ${tr?mktLabel(r.market):mktLabelEn(r.market)}`);
+  L.push(tr? "Fiyat avantajı kayboldu: piyasa bu seçimin aleyhine döndü (çoğu zaman kadro ya da sakatlık haberi). Bu tahminler artık önerilmiyor.\nhttps://bet-fans.com"
+           : "The price edge is gone: the market moved against this pick (often team news or injuries). These picks are no longer recommended.\nhttps://bet-fans.com");
+  return L.join("\n\n"); }
+async function withdrawCheck(){ try{
+  const {data:rows,error}=await sb().rpc("bahis_withdraw_check",{thr:WITHDRAW_CLV_PCT}); if(error) throw error; if(!rows||!rows.length) return { n:0 };
+  const members=await broadcastText({ tr:withdrawText(rows,"tr"), en:withdrawText(rows,"en") });
+  const admin=await sendTelegram(`↩️ BetFans — ${rows.length} tahmin geri çekildi (CLV ≤ -%${WITHDRAW_CLV_PCT})\n\n`+rows.map((r)=>`${r.home} – ${r.away} · ${mktLabel(r.market)} · CLV ${r.clv_pin_pct}%`).join("\n"));
+  return { n:rows.length, members, admin };
+}catch(e){ warn("withdrawCheck",e); return { n:0, error:String(e) }; } }
 async function notifyNewPicks(since,membersOnly=false){ try{
   const {data:rows,error}=await sb().rpc("bahis_recent_autosave",{since}); if(error) throw error; if(!rows||!rows.length) return { sent:0, picks:0 };
   const lines=[`🎯 BetFans — ${rows.length} yeni değer seçimi`];
@@ -1332,6 +1351,7 @@ Deno.serve(async (req)=>{
     if(body.action==="history"){ // uye olmayanlar yalniz sonuclanmis tahminleri gorur (bekleyen = guncel secim)
       const h=await getHistory(body.sport); const m=await sessionMember(req);
       if((!m||m.status!=="approved")&&h.rows) h.rows=h.rows.filter((r)=>r.result!=null);
+      if(h.rows) h.rows=h.rows.map((r)=>r.withdrawn_at? { ...r, withdrawn:true, result_raw:r.result, result:r.result==null? null : "void" } : r); // geri cekilen: sonucu sayilmaz
       // 2026-10-11: gosterilen olasilik secimin dayandigi ADIL olasilik (fiyat-edge satirlari); DB'deki model_prob degismez (kalibrasyon onu kullanir)
       if(h.rows) h.rows=h.rows.map((r)=>{ const fp=fairProb(r.odds,r.pin_edge_pct,r.model_prob); return fp==null? r : { ...r, model_prob_raw:r.model_prob, model_prob:+fp.toFixed(4) }; });
       // Uyum (2026-09-30, 7258 md.5): yabanci bahis sirketi oranlari istemciye gonderilmez (olasilik/CLV yeterli)
