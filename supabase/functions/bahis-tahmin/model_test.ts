@@ -2,7 +2,7 @@
 // Calistir: npx deno test supabase/functions/bahis-tahmin/model_test.ts
 import { assert, assertEquals, assertAlmostEquals } from "jsr:@std/assert@1";
 import { probs, probsLite, shinDevig, median, norm, findKey, findPair, evalMkt, extraPick, dutchPrice, dnbPrice } from "./model.ts";
-import { ahResult, ahBest, onePick } from "./model.ts";
+import { ahResult, ahBest, onePick, fairProb, tier } from "./model.ts";
 import { basketElo, eloPredict, ELO_MEAN } from "./model.ts";
 import { Phi, overWP, fitMu, sideWP, lineResult } from "./model.ts";
 
@@ -131,11 +131,18 @@ Deno.test("Asya handikabi", () => {
   const b=ahBest(ev); assertEquals(b.code,"AH1@-0.5"); assertEquals(b.book,"X"); assert(Math.abs(b.e-0.05)<1e-6); // farkli cizgi (Y) yok sayilir
 });
 
-Deno.test("onePick: mac basina en yuksek fiyat-edge'li tek secim kalir", ()=>{
-  const m={ pick:{ value:true, pin_edge:2.3 }, xpick:{ pin_edge:2.27 }, ahpick:{ pin_edge:2.81 } };
-  onePick(m); assertEquals(m.pick.value, false); assertEquals(m.xpick, undefined); assertEquals(m.ahpick.pin_edge, 2.81);
-  const n={ pick:{ value:true, pin_edge:3.3 }, xpick:{ pin_edge:2.0 } };
-  onePick(n); assertEquals(n.pick.value, true); assertEquals(n.xpick, undefined);
-  const k={ pick:{ value:false, pin_edge:9 }, xpick:{ pin_edge:2.1 } }; // deger olmayan ana secim yarismaz
-  onePick(k); assertEquals(k.xpick.pin_edge, 2.1);
+Deno.test("onePick: mac basina en olasi tek secim kalir", ()=>{
+  const m={ pick:{ value:true, pin_edge:7.48, odds_pin_fair:5.12, model:19.4 }, xpick:{ prob:83.8, pin_edge:2.19 } }; // 5.50 beraberlik vs 1.22 DNB
+  onePick(m); assertEquals(m.pick.value, false); assertEquals(m.xpick.prob, 83.8);
+  const n={ pick:{ value:true, pin_edge:3.3, odds_pin_fair:2.0, model:40 }, xpick:{ prob:45, pin_edge:5 }, ahpick:{ prob:49, pin_edge:9 } };
+  onePick(n); assertEquals(n.pick.value, true); assertEquals(n.xpick, undefined); assertEquals(n.ahpick, undefined);
+  const e={ xpick:{ prob:50, pin_edge:2 }, ahpick:{ prob:50, pin_edge:3 } }; // esit olasilik -> yuksek edge
+  onePick(e); assertEquals(e.xpick, undefined); assertEquals(e.ahpick.pin_edge, 3);
+  const k={ pick:{ value:false, pin_edge:9, model:90 }, xpick:{ prob:20, pin_edge:2.1 } }; // deger olmayan ana secim yarismaz
+  onePick(k); assertEquals(k.xpick.prob, 20);
+});
+Deno.test("fairProb + tier: gosterilen olasilik secimin dayandigi sayi", ()=>{
+  assertAlmostEquals(fairProb(4.90, 3.27, 0.188)!, 0.2108, 1e-3); // Rize: model %18,8 degil, adil %21,1
+  assertEquals(fairProb(3.5, null, 0.41), 0.41); assertEquals(fairProb(null, 2, 1.2), null);
+  assertEquals(tier(0.61), "fav"); assertEquals(tier(0.5), "fav"); assertEquals(tier(0.37), "mid"); assertEquals(tier(0.21), "long");
 });
