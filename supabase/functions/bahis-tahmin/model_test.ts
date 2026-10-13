@@ -159,3 +159,11 @@ Deno.test("bansFor: TFF cezali listesi dogru maca ve dogru tarafa duser", ()=>{
     ["Basaksehir","İSTANBUL BAŞAKŞEHİR FK"],["Besiktas JK","BEŞİKTAŞ A.Ş."],["Çorum FK","ARCA ÇORUM FK"],["Goztepe","GÖZTEPE A.Ş."],["Eyüpspor","EYÜPSPOR"]]) assert(teamHit(o,t), o);
   assert(!teamHit("Basaksehir","KASIMPAŞA A.Ş.")); assert(!teamHit("Samsunspor","TRABZONSPOR A.Ş.")); assert(!teamHit("Erzurum BB","EYÜPSPOR"));
 });
+
+Deno.test("findKey: Inter Milan / AC Milan form anahtarlari karismaz (CSV_ALIAS inter -> intermilan)", ()=>{
+  const eski={ inter:1, milan:1, juventus:1 }, yeni={ intermilan:1, milan:1, juventus:1 };
+  assertEquals(findKey("Inter Milan", eski), null);          // hata: iki aday -> belirsiz -> form yok
+  assertEquals(findKey("Inter Milan", yeni), "intermilan");  // duzeltme: tam eslesme
+  assertEquals(findKey("AC Milan", yeni), "milan");
+  assertEquals(norm("FC Internazionale Milano"), "internazionalemilano"); // football-data.org adi -> CSV_ALIAS anahtari
+});

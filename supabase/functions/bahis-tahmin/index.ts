@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.31";
+const VERSION="10.32";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -51,7 +51,11 @@ const CSV_ALIAS={ mancity:"manchestercity", manunited:"manchesterunited", nottmf
   mgladbach:"borussiamonchengladbach", einfrankfurt:"eintrachtfrankfurt", fckoln:"fccologne",
   parissg:"parissaintgermain", stetienne:"saintetienne",
   buyuksehyr:"istanbulbasaksehir",
-  splisbon:"sportinglisbon", academicoviseu:"academicodeviseu", guimaraes:"vitoriasc", qpr:"queensparkrangers", sheffieldweds:"sheffieldwednesday" };
+  splisbon:"sportinglisbon", academicoviseu:"academicodeviseu", guimaraes:"vitoriasc", qpr:"queensparkrangers", sheffieldweds:"sheffieldwednesday",
+  // 2026-10-13: Odds API "Inter Milan" (intermilan) form anahtarlari "inter" + "milan" ikisine de uyuyordu -> findKey belirsiz -> form yok ->
+  // Inter maclarina HIC secim cikmiyordu (4 macta 0). CSV adi "Inter", football-data.org adi "FC Internazionale Milano"; ikisi de tek anahtara iner.
+  inter:"intermilan", internazionalemilano:"intermilan" };
+const aliasNorm=(x)=>{ const n=norm(x); return CSV_ALIAS[n]||n; }; // form anahtari + settle skor anahtari: kaynak adi -> Odds API adi
 const WORLD_CUP_SPORT="soccer_fifa_world_cup";
 
 function estimateLambdas(pH,pA,pOver,rho){
@@ -232,7 +236,7 @@ function buildRecencyForm(matches,halflife,now){
     const md=new Date(m.utcDate).getTime();
     const days=(now.getTime()-md)/86400000; if(days<0) continue;
     const w=Math.pow(0.5, days/halflife);
-    const hn=norm(m.homeTeam&&m.homeTeam.name), an=norm(m.awayTeam&&m.awayTeam.name); if(!hn||!an) continue;
+    const hn=aliasNorm(m.homeTeam&&m.homeTeam.name), an=aliasNorm(m.awayTeam&&m.awayTeam.name); if(!hn||!an) continue;
     rows.push({hn,an,gh:sc.home,ga:sc.away,w});
     teams[hn]=1; teams[an]=1;
     if(!lastMatch[hn]||md>lastMatch[hn]) lastMatch[hn]=md;
@@ -625,7 +629,7 @@ async function settle(only){ try{
   const ageDays=(d)=>(Date.now()-new Date(d+"T00:00:00Z").getTime())/86400000;
   for(const sp in bySport){ if(!sp) continue;
     const done={};
-    const addDone=(home,away,hs,as)=>{ if(home&&away&&!isNaN(hs)&&!isNaN(as)) done[norm(home)+"|"+norm(away)]={hs,as,home,away}; };
+    const addDone=(home,away,hs,as)=>{ if(home&&away&&!isNaN(hs)&&!isNaN(as)) done[aliasNorm(home)+"|"+aliasNorm(away)]={hs,as,home,away}; }; // takma ad: football-data.org yedegi Inter gibi adlari da eslestirsin
     try{ const sr=await fetch(`https://api.the-odds-api.com/v4/sports/${sp}/scores/?daysFrom=3&apiKey=${ODDS_KEY}`); if(!sr.ok) warn(`settle scores ${sp} HTTP`,sr.status);
       else for(const g of ((await sr.json())||[])){ if(g.completed&&g.scores) addDone(g.home_team,g.away_team,Number(g.scores.find((s)=>s.name===g.home_team)?.score),Number(g.scores.find((s)=>s.name===g.away_team)?.score)); } }catch(e){ warn(`settle scores ${sp}`,e); }
     // Odds API skorlari en fazla 3 gun geriye gider; daha eski bekleyenler (API kesintisi, 14-26.09 gibi) football-data.org'dan
