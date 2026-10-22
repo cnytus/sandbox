@@ -559,7 +559,8 @@ renderAutoCoupons();
 // v8.1: every page open auto-loads matches AND settles finished games (auto() chains:
 // fixtures -> savePicks -> settle -> history refresh). Returning to the tab after >60s
 // re-runs the same refresh so scores/results stay current without a manual click.
-initAuth();
+// 2026-10-22: authModal bu betikten SONRA tanimli; #reset bagi ile acilista openAuth null'a carpiyordu (sifre sifirlama formu hic acilmiyordu)
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initAuth);else initAuth();
 let lastAutoRefresh=Date.now();
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden && member&&member.status==='approved' && Date.now()-lastAutoRefresh>60000){ lastAutoRefresh=Date.now(); auto(); } });
 </script>
