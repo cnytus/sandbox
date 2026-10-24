@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.32";
+const VERSION="10.33";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -751,15 +751,15 @@ async function calibrate(){
     const paramsBefore=await getParams();
     if(n<30) return { skipped:true, sample_size:n, reason:"need >=30 settled predictions to calibrate safely", params:paramsBefore };
 
-    let sqErr=0;
+    let sqErr=0, nBrier=0;
     const valueRows=[], nonValueRows=[];
     for(const r of rows){
       const mp=r.model_prob==null?null:+r.model_prob;
       const outcome=r.result==="hit"?1:0;
-      if(mp!=null){ sqErr += Math.pow(mp-outcome,2); }
+      if(mp!=null){ sqErr += Math.pow(mp-outcome,2); nBrier++; }
       if(r.is_value) valueRows.push(r); else nonValueRows.push(r);
     }
-    const brier = rows.length? sqErr/rows.length : null;
+    const brier = nBrier? sqErr/nBrier : null; // 2026-10-24: payda yalniz olasiligi olan kayitlar (once tum satirlar -> olduğundan iyi gorunuyordu)
 
     const buckets=[{lo:-1e9,hi:0,label:"<0%"},{lo:0,hi:5,label:"0-5%"},{lo:5,hi:10,label:"5-10%"},{lo:10,hi:15,label:"10-15%"},{lo:15,hi:1e9,label:"15%+"}];
     const bucketStats=buckets.map((b)=>({label:b.label,n:0,hitRate:0,avgModel:0}));
@@ -1149,13 +1149,14 @@ async function autosave(opt={}){
         if(dt<=0||dt>8*86400000) continue;
         picks.push({ sport:sp, home:m.home, away:m.away, match_date:String(m.commence).slice(0,10),
           market:m.pick.code, family:m.pick.family, model_prob:m.pick.model/100, market_prob:m.pick.mkt/100,
-          edge_pct:m.pick.edge, odds:m.pick.odds, odds_pinnacle:m.pick.odds_pin, pin_edge_pct:m.pick.pin_edge, is_value:true, source:"autosave", commence_time:m.commence,
+          edge_pct:m.pick.edge, odds:m.pick.odds, odds_pinnacle:m.pick.odds_pin, pin_edge_pct:m.pick.pin_edge, is_value:true, source:"autosave", commence_time:m.commence, book:m.pick.book||null, rule_version:VERSION,
           lambda_home:m.model_lh, lambda_away:m.model_la, params_version:m.params_version });
       }
       for(const m of (fx.matches||[])){ const x=m.xpick; if(m.live||!x||!m.commence) continue;
         const dt=new Date(m.commence).getTime()-Date.now(); if(dt<=0||dt>8*86400000) continue;
         picks.push({ sport:sp, home:m.home, away:m.away, match_date:String(m.commence).slice(0,10), market:x.code, family:"extra",
           model_prob:x.prob/100, market_prob:x.prob/100, edge_pct:0, odds:x.odds, odds_pinnacle:x.fair_odds, pin_edge_pct:x.pin_edge, is_value:true, source:"autosave", commence_time:m.commence,
+          book:[...new Set((x.legs||[]).map((l)=>l.book).filter(Boolean))].join(" + ")||null, rule_version:VERSION,
           lambda_home:m.model_lh, lambda_away:m.model_la, params_version:m.params_version }); }
       let saved=0;
       if(picks.length){ const r=await savePreds(picks); saved=r.saved||0; }
@@ -1167,7 +1168,7 @@ async function autosave(opt={}){
   const ah=await ahScan();
   const ahPicks=ah.all.filter((x)=>{ const dt=new Date(x.commence).getTime()-Date.now(); return dt>0&&dt<=8*86400000; }).map((x)=>({ sport:x.sport, home:x.home, away:x.away,
     match_date:String(x.commence).slice(0,10), market:x.pick.code, family:"ah", model_prob:x.pick.prob/100, market_prob:x.pick.prob/100, edge_pct:0, odds:x.pick.odds,
-    odds_pinnacle:x.pick.fair_odds, pin_edge_pct:x.pick.pin_edge, is_value:true, source:"autosave", commence_time:x.commence }));
+    odds_pinnacle:x.pick.fair_odds, pin_edge_pct:x.pick.pin_edge, is_value:true, source:"autosave", commence_time:x.commence, book:x.pick.book||null, rule_version:VERSION }));
   { let saved=0; if(ahPicks.length){ const r=await savePreds(ahPicks); saved=r.saved||0; } total+=saved; detail.asya_handikap={ candidates:ahPicks.length, saved, scan:ah.out }; }
   const telegram=(total>0||opt.extras)? await notifyNewPicks(since) : { sent:0, picks:0 };
   return { total_saved:total, detail, telegram, results };
@@ -1196,7 +1197,7 @@ async function intlFor(req,m){ let why="";
   finally{ if(why&&why!=="uye_onay_yok"&&why!=="ayar_kapali") console.log("intl karar:",why); } } // teshis: IP/telefon loglanmaz
 const BOOK_KEYS=new Set(["book","books","books_used","bookmaker","bookmakers"]);
 function stripBooks(o){ if(Array.isArray(o)){ for(const x of o) stripBooks(x); } else if(o&&typeof o==="object"){ for(const k of Object.keys(o)){ if(BOOK_KEYS.has(k)) delete o[k]; else stripBooks(o[k]); } } return o; }
-const HIST_ODDS=["odds","odds_pinnacle","closing_odds","closing_odds_pinnacle"];
+const HIST_ODDS=["odds","odds_pinnacle","closing_odds","closing_odds_pinnacle","book"]; // book: karar anindaki en iyi fiyatin sirketi (2026-10-24, yalniz ic kayit)
 
 // ---- Uyelik (2026-09-29) ----
 // Kayit (e-posta + telefon + sifre) -> 'pending'. Telefon BetFans Telegram botunda "numarami paylas" ile dogrulanir; sonra yoneticiye
