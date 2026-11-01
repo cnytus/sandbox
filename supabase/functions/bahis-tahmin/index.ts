@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.34";
+const VERSION="10.35";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -434,8 +434,11 @@ async function saveSnapshots(sport,events){ try{
 // Kredi korumasi (2026-09-27, site herkese acik): kalan kredi ODDS_CREDIT_FLOOR altindaysa herkese acik istekler (pub) API'yi
 // cagirmaz, bayat onbellekle yetinir; cron'lar (autosave/kapanis/settle) calismaya devam eder. Kalan kredi her cekimde "credits" anahtarina yazilir.
 const ODDS_CREDIT_FLOOR=2000;
+const hasPinnacle=(evs)=>{ const lim=Date.now()+48*3600000; const near=(evs||[]).filter((e)=>Date.parse(e.commence_time)<=lim); return !near.length||near.some((e)=>(e.bookmakers||[]).some((b)=>b.key==="pinnacle")); };
 async function fetchOddsEvents(sport,pub=false){
-  try{ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:sport,max_age_seconds:ODDS_CACHE_TTL_S}); if(data) return { events:data, cached:true }; }catch(e){ warn("odds cache read",e); }
+  // 2026-11-01: 13:00 cekimi hic Pinnacle'siz geldi, onbellege yazildi; 13:15 gunluk taramasi onu kullanip gunu sifir secim + favori adayi
+  // olmadan gecirdi. Zamanlanmis gorevler (pub=false) yakin maclarda hic Pinnacle olmayan onbellegi kullanmaz, taze ceker. Site (pub) onbellekte kalir (kredi).
+  try{ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:sport,max_age_seconds:ODDS_CACHE_TTL_S}); if(data&&(pub||hasPinnacle(data))) return { events:data, cached:true }; }catch(e){ warn("odds cache read",e); }
   if(pub){ try{ const {data:cr}=await sb().rpc("bahis_get_odds_cache",{sp:"credits",max_age_seconds:86400});
     if(cr&&cr.remaining!=null&&cr.remaining<ODDS_CREDIT_FLOOR){ const {data:st}=await sb().rpc("bahis_get_odds_cache",{sp:sport,max_age_seconds:30*86400}); return { events:st||[], cached:true, stale:true }; } }catch(e){ warn("credit guard",e); } }
   const res=await fetch(`https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=${isBasket(sport)?"h2h,spreads,totals":"h2h,totals"}&oddsFormat=decimal`);
