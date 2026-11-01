@@ -1405,7 +1405,8 @@ Deno.serve(async (req)=>{
       const {data,error}=await sb().rpc("bahis_tr_ip_replace",{p:body.ranges||[]}); return error? J({ error:error.message },400) : J({ ok:true, ranges:data }); }
     if(body.action==="coupons"){ const {data,error}=await sb().rpc("bahis_coupons_list",{lim:60}); if(error) return J({ error:error.message },500);
       const svc=!!CARD_KEY&&req.headers.get("x-card-key")===CARD_KEY; const m=svc? null : await sessionMember(req); const full=svc||!!(m&&m.status==="approved");
-      return J({ coupons:(data||[]).filter((c)=>full||c.result!=null) }); }
+      const today=new Date(Date.now()+3*3600000).toISOString().slice(0,10); // ziyaretciye yalniz bugunun bekleyen kupon SAYISI (icerik uyeye)
+      return J({ coupons:(data||[]).filter((c)=>full||c.result!=null), pending_count:(data||[]).filter((c)=>c.result==null&&String(c.day)===today).length }); }
     if(body.action==="tff_bans_set"){ if(!CARD_KEY||req.headers.get("x-card-key")!==CARD_KEY) return J({ error:"yetkisiz" },401); return J(await tffBansSet(body)); }
     if(body.action==="card_broadcast"){ if(!CARD_KEY||req.headers.get("x-card-key")!==CARD_KEY) return J({ error:"yetkisiz" },401); return J(await cardBroadcast(body)); }
     if(body.action==="bot_setup") return await botSetup(body);
