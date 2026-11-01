@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.35";
+const VERSION="10.36";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -1143,12 +1143,15 @@ async function buildCoupons(dry=false){ const now=Date.now(), lead=now+COUPON_LE
   const {data:pv,error}=await sb().rpc("bahis_coupon_value_candidates"); if(error) throw error;
   const val=(pv||[]).map((r)=>({ sport:r.sport, home:r.home, away:r.away, market:r.market, commence:r.commence_time, prob:+((fairProb(r.odds,r.pin_edge_pct,r.model_prob)||0).toFixed(4)) })).filter(ok);
   const fav=[]; for(const sp of AUTOSAVE_SPORTS){ const {data}=await sb().rpc("bahis_get_odds_cache",{sp:"fav:"+sp,max_age_seconds:36*3600}); if(Array.isArray(data)) fav.push(...data.filter(ok)); }
+  // 2026-11-01: 48 saat genislemesi ertesi gun ayni maclarla ayni kuponu tekrar uretebiliyordu; onceki gunlerin kuponlarinda kullanilan mac ayni turde tekrar girmez
+  const used={ value:new Set(), fav:new Set() }; const {data:prev}=await sb().rpc("bahis_coupons_list",{lim:40});
+  for(const c of (prev||[])) if(!c.retro&&String(c.day)<day&&used[c.kind]) for(const l of (c.legs||[])) used[c.kind].add(l.sport+"|"+l.home+"|"+l.away);
   const made=[];
-  for(const [kind,cands] of [["value",val],["fav",fav]]) for(const n of COUPON_SIZES){ const legs=pickLegs(cands,n,endToday); if(!legs) continue;
+  for(const [kind,all] of [["value",val],["fav",fav]]){ const cands=all.filter((c)=>!used[kind].has(c.sport+"|"+c.home+"|"+c.away)); for(const n of COUPON_SIZES){ const legs=pickLegs(cands,n,endToday); if(!legs) continue;
     const prob=+legs.reduce((a,l)=>a*l.prob,1).toFixed(5);
     if(dry){ made.push({ day, kind, size:n, legs, prob }); continue; } // onizleme: kaydetmez, gondermez
     const {data:id,error:e2}=await sb().rpc("bahis_coupon_insert",{p:{ day, kind, size:n, legs, prob }}); if(e2){ warn("coupon insert",e2); continue; }
-    if(id) made.push({ id, day, kind, size:n, legs, prob }); }
+    if(id) made.push({ id, day, kind, size:n, legs, prob }); } }
   return made; }
 const pctF=(p,tr)=>tr? "%"+(p*100).toFixed(1).replace(".",",") : (p*100).toFixed(1)+"%";
 const oddF=(o,tr)=>tr? o.toFixed(2).replace(".",",") : o.toFixed(2);
