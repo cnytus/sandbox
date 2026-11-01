@@ -16,7 +16,7 @@ import { poisson, dc, probs, probsLite, shinDevig, avg, median, norm, findKey, f
 // v10.6) sprint-1: backtest'e Pinnacle-kapanis CLV + Ust/Alt 2.5; capture_closing Pinnacle kapanisi (clv_pin_pct);
 //        kalibrasyon >=50 ornek ve yalniz clv_pin; sprint-2: lig bazli yari omur (league_params.halflife_days),
 //        Kelly 1/8 + tek bahis %3.
-const VERSION="10.36";
+const VERSION="10.37";
 const CORS={ "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type, x-admin-key, x-session, x-card-key", "Access-Control-Allow-Methods":"GET, POST, OPTIONS" };
 const J=(o,s=200)=> new Response(JSON.stringify(o),{status:s,headers:{...CORS,"Content-Type":"application/json"}});
 // Anahtarlar YALNIZ Supabase secret'larindan gelir; kodda fallback yok (public repoda sizmisti, rotasyon yapildi).
@@ -1131,7 +1131,7 @@ async function withdrawCheck(){ try{
 // value: yayinlanan deger tahminlerinden (fiyat avantajli); fav: en olasi sonuclardan (Pinnacle adil olasiligi; fiyat avantaji ARANMAZ).
 // Her tur icin gunde bir 3'lu + bir 4'lu; ayak olasiligi >= %50, once bugunun (TSI) maclari, yetmezse 48 saat. Kupon ayaklari tahmin
 // tablosuna yazilmaz (bahis_tahmin.coupons.legs). Sonuc settle() icinde; TUTAN kupon karti kart/kart.py'den (card_broadcast).
-const COUPON_MIN_P=0.5, COUPON_SIZES=[3,4], COUPON_LEAD_MS=10*60000, FAV_RE=/^(1|X|2|O|U)$/;
+const COUPON_MIN_P=0.5, COUPON_SIZES=[3,4], COUPON_LEAD_MS=30*60000, /* 30 dk: uyeye kart kart.py'den <=10 dk sonra gider */ FAV_RE=/^(1|X|2|O|U)$/;
 async function saveFavs(sp,ms){ try{ const now=Date.now(), out=[];
   for(const m of (ms||[])){ if(m.live||!m.commence) continue; const dt=new Date(m.commence).getTime()-now; if(dt<=COUPON_LEAD_MS||dt>48*3600000) continue;
     let best=null; for(const x of (m.markets||[])){ const fo=+x.odds_pin_fair; if(!(fo>1)||!FAV_RE.test(String(x.code))) continue; const pr=1/fo; if(!best||pr>best.prob) best={ market:x.code, prob:+pr.toFixed(4) }; }
@@ -1163,8 +1163,9 @@ function couponText(cs,lang){ const tr=lang==="tr"; const L=[tr? "🎟️ BetFan
            : "The value coupon uses our price-edge picks, the favourites coupon the most likely outcomes (no price edge required). Fair odds = 1 ÷ probability; not a bookmaker's odds.\nhttps://bet-fans.com\n18+ · Picks are not guaranteed. Send /stop to turn off notifications.");
   return L.join("\n\n"); }
 async function publishCoupons(){ try{ const made=await buildCoupons(); if(!made.length) return { made:0 };
-  const members=await broadcastText({ tr:couponText(made,"tr"), en:couponText(made,"en") }); const admin=await sendTelegram(couponText(made,"tr"));
-  return { made:made.length, members, admin }; }catch(e){ warn("publishCoupons",e); return { made:0, error:String(e) }; } }
+  // 2026-11-01: uyelere metin yerine GUNUN KUPONU karti gider (kart/kart.py, card_broadcast); yoneticiye metin ozeti kalir (yedek/izleme)
+  const admin=await sendTelegram(couponText(made,"tr"));
+  return { made:made.length, admin, members:"kart.py" }; }catch(e){ warn("publishCoupons",e); return { made:0, error:String(e) }; } }
 // settle() sonunda: acik kuponlarin ayaklari ayni skor haritasiyla sonuclanir.
 async function settleCoupons(open,doneBy,ageDays){ const ups=[];
   for(const c of open){ let changed=false; const legs=(c.legs||[]).map((l)=>{ if(l.result) return l; const done=doneBy[l.sport]; const key=done&&findPair(l.home,l.away,done); const sc=key? done[key] : null;

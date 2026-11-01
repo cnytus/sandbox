@@ -9,7 +9,7 @@ Kullanım:  python kart.py              # üret + bildir
            python kart.py --test       # öz-denetim (ağ yok)
 Ortam: OUT (/out), STATE (/state), MIN_ODDS (2.0), CARD_KEY, SITE (https://bet-fans.com)
 """
-import json, os, re, sys, unicodedata, urllib.parse, urllib.request
+import json, os, re, secrets, sys, time, unicodedata, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
@@ -162,13 +162,67 @@ def ciz_kupon(c, zemin):
     y0, step = 650, (62 if len(legs) <= 3 else 50)
     for i, l in enumerate(legs):
         sk = f" · {l['score']}" if l.get("score") else ""
-        yazi(img, f"{l['home']} - {l['away']} · {pazar(l['market']) or l['market']}{sk}", F_B, 36 if len(legs) <= 3 else 32, y0 + i * step, (255, 255, 255, 230), max_w=940)
+        yazi(img, f"{l['home']} - {l['away']} · {pazar(l['market']) or l['market']}{sk}", F_B, 36 if len(legs) <= 3 else 32, y0 + i * step, (255, 255, 255, 230), max_w=780)
     yazi(img, f"{1 / float(c['prob']):.2f}", F_XB, 180, 948 if len(legs) <= 3 else 972, (80, 232, 59, 255), max_w=560, glow=(80, 232, 59, 150))
     d = datetime.strptime(c["day"], "%Y-%m-%d").date()
     yazi(img, f"adil toplam oran · olasılık %{round(100 * float(c['prob']))} · {d.day} {AY[d.month - 1]}", F_XB, 46, 1118, (255, 255, 255, 255))
     if c.get("retro"):  # geriye dönük hesaplanan kupon: o gün yayınlanmadı (paylaşılan görsel yanıltmasın)
         yazi(img, "GERİYE DÖNÜK HESAPLAMA · O GÜN YAYINLANMADI", F_B, 30, 1190, (255, 210, 80, 255), max_w=900)
     return img.convert("RGB")
+
+
+ROZET = [(200, 313), (924, 313), (892, 499), (158, 499)]  # zemindeki "✓ TUTTU" rozeti (egik yesil kutu)
+
+
+def gunun_zemin(zemin):
+    """Bekleyen kupon kartı: TUTTU rozeti aynı yeşille kapatılır, yerine GÜNÜN KUPONU (oynanmamış kupon 'tuttu' görünmesin)."""
+    img = zemin.copy()
+    ImageDraw.Draw(img).polygon(ROZET, fill=(93, 234, 71, 255))
+    yazi(img, "GÜNÜN KUPONU", F_XB, 118, 404, (8, 20, 14, 255), max_w=700)
+    return img
+
+
+def saat(iso):
+    return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).astimezone(TR).strftime("%H:%M")
+
+
+def ciz_gunun(c, zemin):
+    img = gunun_zemin(zemin)
+    yazi(img, kupon_baslik(c), F_XB, 58, 572, (255, 255, 255, 255))
+    legs = sorted(c["legs"], key=lambda l: str(l["commence"]))
+    y0, step = 650, (62 if len(legs) <= 3 else 50)
+    for i, l in enumerate(legs):
+        yazi(img, f"{saat(l['commence'])}  {l['home']} - {l['away']} · {pazar(l['market']) or l['market']} · %{round(100 * float(l['prob']))}",
+             F_B, 36 if len(legs) <= 3 else 32, y0 + i * step, (255, 255, 255, 230), max_w=780)
+    yazi(img, f"{1 / float(c['prob']):.2f}", F_XB, 180, 948 if len(legs) <= 3 else 972, (80, 232, 59, 255), max_w=560, glow=(80, 232, 59, 150))
+    d = datetime.strptime(c["day"], "%Y-%m-%d").date()
+    yazi(img, f"adil toplam oran · tutma olasılığı %{round(100 * float(c['prob']))} · {d.day} {AY[d.month - 1]}", F_XB, 44, 1118, (255, 255, 255, 255))
+    return img.convert("RGB")
+
+
+def telegram_gunun(c, name):
+    key = os.environ.get("CARD_KEY")
+    if not key: print("bildirim: CARD_KEY yok"); return False
+    o, p = 1 / float(c["prob"]), round(100 * float(c["prob"]))
+    tr = "\n".join(f"• {saat(l['commence'])} {l['home']} – {l['away']} · {pazar(l['market']) or l['market']} (%{round(100 * float(l['prob']))})" for l in c["legs"])
+    en = "\n".join(f"• {datetime.fromisoformat(str(l['commence']).replace('Z', '+00:00')).astimezone(timezone.utc):%H:%M} UTC {l['home']} – {l['away']} · {pazar_en(l['market']) or l['market']} ({round(100 * float(l['prob']))}%)" for l in c["legs"])
+    not_tr = "Favori kuponu en olası sonuçlardan oluşur; fiyat avantajı aranmaz." if c["kind"] == "fav" else "Değer kuponu fiyat avantajlı tahminlerimizden oluşur."
+    not_en = "The favourites coupon uses the most likely outcomes; no price edge required." if c["kind"] == "fav" else "The value coupon uses our price-edge picks."
+    cap = "\n".join([f"🎟️ GÜNÜN KUPONU · {kupon_baslik(c)}", tr, f"Tutma olasılığı %{p} · adil toplam oran {o:.2f}", not_tr,
+                     "Adil oran = 1 ÷ olasılık; bahis şirketi oranı değildir.", "", f"Tüm kuponlar ve sonuçları: {SITE}",
+                     "18+ · Tahminler garanti değildir.", "Bu bildirimleri kapatmak için /durdur yaz."])
+    cap_en = "\n".join([f"🎟️ TODAY'S COUPON · {kupon_baslik(c, True)}", en, f"Win probability {p}% · fair total odds {o:.2f}", not_en,
+                        "Fair odds = 1 ÷ probability; not a bookmaker's odds.", "", f"All coupons and results: {SITE}",
+                        "18+ · Picks are not guaranteed.", "Send /stop to turn off these messages."])
+    body = json.dumps({"action": "card_broadcast", "f": name, "caption": cap[:1000], "caption_en": cap_en[:1000]}).encode()
+    req = urllib.request.Request(API, data=body, headers={"Content-Type": "application/json", "x-card-key": key})
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            d = json.load(resp)
+        print("gönderim:", name, {k: d.get(k) for k in ("sent", "total", "fail", "error", "reason")})
+        return (d.get("sent") or 0) > 0
+    except Exception as e:  # anahtar asla loglanmaz
+        print("bildirim hatası:", type(e).__name__, getattr(e, "code", "")); return False
 
 
 def kupon_alt(c):
@@ -273,9 +327,15 @@ def calis(notify=True):
     if not intl:  # ayar kapalıyken gerçek oranlı kart sunucuda durmaz
         for fn in os.listdir(idir): os.remove(os.path.join(idir, fn))
     try:
-        kup = [c for c in kuponlar() if c.get("result") == "hit" and c.get("legs")]
+        tum_k = kuponlar()
     except Exception as e:
-        print("kuponlar alınamadı:", type(e).__name__); kup = []
+        print("kuponlar alınamadı:", type(e).__name__); tum_k = []
+    kup = [c for c in tum_k if c.get("result") == "hit" and c.get("legs")]
+    bugun = datetime.now(TR).strftime("%Y-%m-%d")
+    gunun = [c for c in tum_k if c.get("result") is None and not c.get("retro") and c.get("day") == bugun and c.get("legs")]
+    for fn in os.listdir(OUT):  # eski günün kupon kartları (galeride değil) 3 gün sonra silinir
+        if fn.startswith("kart-gunun-") and time.time() - os.path.getmtime(os.path.join(OUT, fn)) > 3 * 86400:
+            os.remove(os.path.join(OUT, fn))
     for c in kup:
         name = kupon_ad(c)
         if not os.path.exists(os.path.join(OUT, name + ".jpg")):
@@ -308,6 +368,18 @@ def calis(notify=True):
             if not telegram_kupon(c, name): continue
             n += 1
         sent.add(name)
+    # GÜNÜN KUPONU: yayın günü bekleyen kupon kartı -> üyelere fotoğraf (her kupon bir kez). Dosya adı tahmin edilemez, galeriye girmez
+    # (bekleyen kuponun içeriği üyelere ait).
+    for c in gunun:
+        key = f"gunun-{c['day']}-{c['kind']}-{c['size']}"
+        if key in sent: continue
+        if notify:
+            if n >= NOTIFY_MAX: break
+            name = f"kart-gunun-{c['day']}-{c['kind']}-{c['size']}-{secrets.token_hex(5)}"
+            kaydet(ciz_gunun(c, zemin), name); print("günün kuponu kartı:", name)
+            if not telegram_gunun(c, name): continue
+            n += 1
+        sent.add(key)
     with open(sp, "w", encoding="utf-8") as fh: json.dump(sorted(sent), fh)
     print(f"uygun={len(rows)} yeni_kart={len(yeni)} bildirim={n}")
 
@@ -333,6 +405,9 @@ def test():
                   {"home": "Lazio", "away": "Monza", "market": "U", "score": "1-0"}, {"home": "Arsenal", "away": "Leeds United", "market": "1", "score": "2-0"}]}
     assert kupon_ad(c) == "kart-kupon-2026-11-01-value-4" and ciz_kupon(c, Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA")).size == (1080, 1350)
     kaydet(ciz_kupon(c, Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA")), kupon_ad(c))
+    g = {**c, "retro": False, "result": None, "legs": [{**l, "commence": "2026-11-01T15:15:00Z", "prob": 0.79} for l in c["legs"]]}
+    assert saat("2026-11-01T15:15:00Z") == "18:15" and ciz_gunun(g, Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA")).size == (1080, 1350)
+    kaydet(ciz_gunun(g, Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA")), "kart-gunun-test")
     assert os.path.getsize(os.path.join(OUT, ad(r) + ".jpg")) > 50_000
     print("test OK ->", OUT)
 
