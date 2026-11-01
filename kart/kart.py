@@ -145,6 +145,65 @@ def kaydet(img, name):
     img.resize((432, 540), Image.LANCZOS).save(os.path.join(OUT, name + "-k.webp"), quality=82)
 
 
+def kupon_ad(c):
+    return f"kart-kupon-{c['day']}-{c['kind']}-{c['size']}"
+
+
+def kupon_baslik(c, en=False):
+    if en: return ("VALUE COUPON" if c["kind"] == "value" else "FAVOURITES COUPON") + f" · {c['size']} MATCHES"
+    return ("DEĞER KUPONU" if c["kind"] == "value" else "FAVORİ KUPONU") + f" · {c['size']} MAÇ"
+
+
+def ciz_kupon(c, zemin):
+    """TUTAN kupon: başlık, ayaklar (maç · pazar · skor), büyük sayı = adil toplam oran (1 ÷ olasılık çarpımı)."""
+    img = zemin.copy()
+    yazi(img, kupon_baslik(c), F_XB, 58, 572, (255, 255, 255, 255))
+    legs = c["legs"]
+    y0, step = 650, (62 if len(legs) <= 3 else 50)
+    for i, l in enumerate(legs):
+        sk = f" · {l['score']}" if l.get("score") else ""
+        yazi(img, f"{l['home']} - {l['away']} · {pazar(l['market']) or l['market']}{sk}", F_B, 36 if len(legs) <= 3 else 32, y0 + i * step, (255, 255, 255, 230), max_w=940)
+    yazi(img, f"{1 / float(c['prob']):.2f}", F_XB, 180, 948 if len(legs) <= 3 else 972, (80, 232, 59, 255), max_w=560, glow=(80, 232, 59, 150))
+    d = datetime.strptime(c["day"], "%Y-%m-%d").date()
+    yazi(img, f"adil toplam oran · olasılık %{round(100 * float(c['prob']))} · {d.day} {AY[d.month - 1]}", F_XB, 46, 1118, (255, 255, 255, 255))
+    return img.convert("RGB")
+
+
+def kupon_alt(c):
+    return f"{kupon_baslik(c)} tuttu: " + "; ".join(f"{l['home']} – {l['away']} {pazar(l['market']) or l['market']}" for l in c["legs"]) + f"; adil toplam oran {1 / float(c['prob']):.2f}"
+
+
+def kuponlar():
+    h = {"Content-Type": "application/json"}
+    if os.environ.get("CARD_KEY"): h["x-card-key"] = os.environ["CARD_KEY"]
+    req = urllib.request.Request(API, data=b'{"action":"coupons"}', headers=h)
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.load(resp).get("coupons", [])
+
+
+def telegram_kupon(c, name):
+    key = os.environ.get("CARD_KEY")
+    if not key: print("bildirim: CARD_KEY yok"); return False
+    url = f"{SITE}/assets/paylasim/{name}.jpg"
+    o = 1 / float(c["prob"])
+    satir = lambda en: "\n".join(f"• {l['home']} – {l['away']} · {(pazar_en if en else pazar)(l['market']) or l['market']} · {l.get('score') or '-'}" for l in c["legs"])
+    cap = "\n".join([f"✅ KUPON TUTTU! {kupon_baslik(c)}", satir(False), f"Adil toplam oran {o:.2f} · olasılık %{round(100 * float(c['prob']))}",
+                     "Adil oran = 1 ÷ olasılık; bahis şirketi oranı değildir.", "", f"Tüm kuponlar (tutmayanlar dahil): {SITE}", f"Paylaş: {url}",
+                     "18+ · Geçmiş sonuç garanti değildir.", "Bu bildirimleri kapatmak için /durdur yaz."])
+    cap_en = "\n".join([f"✅ COUPON WON! {kupon_baslik(c, True)}", satir(True), f"Fair total odds {o:.2f} · probability {round(100 * float(c['prob']))}%",
+                        "Fair odds = 1 ÷ probability; not a bookmaker's odds.", "", f"All coupons (including misses): {SITE}", f"Share: {url}",
+                        "18+ · Past results are no guarantee.", "Send /stop to turn off these messages."])
+    body = json.dumps({"action": "card_broadcast", "f": name, "caption": cap[:1000], "caption_en": cap_en[:1000]}).encode()
+    req = urllib.request.Request(API, data=body, headers={"Content-Type": "application/json", "x-card-key": key})
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            d = json.load(resp)
+        print("gönderim:", name, {k: d.get(k) for k in ("sent", "total", "fail", "error", "reason")})
+        return (d.get("sent") or 0) > 0
+    except Exception as e:  # anahtar asla loglanmaz
+        print("bildirim hatası:", type(e).__name__, getattr(e, "code", "")); return False
+
+
 def alt(r):
     return f"Tuttu: {r['home']} – {r['away']}, {pazar(r['market'])}, olasılık %{round(100 * float(r['model_prob']))}, adil oran {adil(r):.2f}, skor {r.get('actual_score') or '-'}"
 
@@ -211,7 +270,17 @@ def calis(notify=True):
             ciz_intl(r, zemin).save(ip, quality=88, optimize=True, progressive=True)
     if not intl:  # ayar kapalıyken gerçek oranlı kart sunucuda durmaz
         for fn in os.listdir(idir): os.remove(os.path.join(idir, fn))
-    manifest = [{"f": ad(r), "alt": alt(r), "d": f"{gun(r):%Y-%m-%d}", "o": round(adil(r), 2)} for r in rows][:GALLERY_MAX]
+    try:
+        kup = [c for c in kuponlar() if c.get("result") == "hit" and c.get("legs")]
+    except Exception as e:
+        print("kuponlar alınamadı:", type(e).__name__); kup = []
+    for c in kup:
+        name = kupon_ad(c)
+        if not os.path.exists(os.path.join(OUT, name + ".jpg")):
+            kaydet(ciz_kupon(c, zemin), name); yeni.append(name); print("kupon kartı:", name)
+    manifest = [{"f": ad(r), "alt": alt(r), "d": f"{gun(r):%Y-%m-%d}", "o": round(adil(r), 2)} for r in rows]
+    manifest += [{"f": kupon_ad(c), "alt": kupon_alt(c), "d": c["day"], "o": round(1 / float(c["prob"]), 2)} for c in kup]
+    manifest = sorted(manifest, key=lambda m: (m["d"], m["o"]), reverse=True)[:GALLERY_MAX]
     tmp = os.path.join(OUT, "kartlar.json.tmp")
     with open(tmp, "w", encoding="utf-8") as fh: json.dump(manifest, fh, ensure_ascii=False)
     os.replace(tmp, os.path.join(OUT, "kartlar.json"))
@@ -225,6 +294,14 @@ def calis(notify=True):
         if notify:
             if n >= NOTIFY_MAX: break
             if not telegram(r, name, intl): continue  # gönderilemedi -> sonraki koşu tekrar dener
+            n += 1
+        sent.add(name)
+    for c in kup:
+        name = kupon_ad(c)
+        if name in sent: continue
+        if notify:
+            if n >= NOTIFY_MAX: break
+            if not telegram_kupon(c, name): continue
             n += 1
         sent.add(name)
     with open(sp, "w", encoding="utf-8") as fh: json.dump(sorted(sent), fh)
@@ -247,6 +324,11 @@ def test():
     assert img.size == (1080, 1350)
     assert ciz_intl({**r, "odds": 7.6}, Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA")).size == (1080, 1350)
     kaydet(img, ad(r))
+    c = {"day": "2026-11-01", "kind": "value", "size": 4, "prob": 0.1512, "result": "hit",
+         "legs": [{"home": "Çaykur Rizespor", "away": "Fenerbahce", "market": "2", "score": "0-3"}, {"home": "Real Betis", "away": "CA Osasuna", "market": "1", "score": "5-2"},
+                  {"home": "Lazio", "away": "Monza", "market": "U", "score": "1-0"}, {"home": "Arsenal", "away": "Leeds United", "market": "1", "score": "2-0"}]}
+    assert kupon_ad(c) == "kart-kupon-2026-11-01-value-4" and ciz_kupon(c, Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA")).size == (1080, 1350)
+    kaydet(ciz_kupon(c, Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA")), kupon_ad(c))
     assert os.path.getsize(os.path.join(OUT, ad(r) + ".jpg")) > 50_000
     print("test OK ->", OUT)
 

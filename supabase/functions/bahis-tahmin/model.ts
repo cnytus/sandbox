@@ -178,3 +178,13 @@ export function bansFor(home,away,commence,rows){ const ms=Date.parse(commence);
   const day=new Date(ms+3*3600000).toISOString().slice(0,10); const out={ home:[], away:[] };
   for(const r of rows){ if(!r||r.date!==day||!teamHit(home,r.home)||!teamHit(away,r.away)) continue; out[r.club===r.home?"home":"away"].push({ n:r.player, t:r.type }); }
   return (out.home.length||out.away.length)? out : null; }
+
+// Kuponlar (2026-11-01): adaylardan mac basina tek ayak, olasiligi en yuksek n ayak. Once bugun (TSI) biten pencere; yetmezse adaylarin
+// tamami (48 saat). Yine yetmezse null (o boyutta kupon yok).
+export function pickLegs(cands,n,endToday){
+  const uniq=(xs)=>{ const seen=new Set(), out=[]; for(const c of [...xs].sort((a,b)=>b.prob-a.prob)){ const k=c.sport+"|"+c.home+"|"+c.away; if(seen.has(k)) continue; seen.add(k); out.push(c); } return out; };
+  const today=uniq(cands.filter((c)=>Date.parse(c.commence)<=endToday)); if(today.length>=n) return today.slice(0,n);
+  const all=uniq(cands); return all.length>=n? all.slice(0,n) : null; }
+// Kupon sonucu: bir ayak yatarsa kupon hemen yatar; hepsi sonuclaninca iade ayaklar dusulur (oran 1,00), hepsi iadeyse kupon iade.
+export function couponResult(legs){ if(legs.some((l)=>l.result==="miss")) return "miss"; if(legs.some((l)=>!l.result)) return null;
+  return legs.some((l)=>l.result!=="void")? "hit" : "void"; }
