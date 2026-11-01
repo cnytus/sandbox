@@ -102,6 +102,7 @@ aside{position:sticky;top:90px;align-self:start;max-height:calc(100vh - 108px);o
 .cnav{display:flex;justify-content:center;gap:7px;margin-top:11px}
 .cdot{width:8px;height:8px;border-radius:50%;background:var(--line);cursor:pointer;transition:.15s}.cdot.on{background:var(--accent);transform:scale(1.25);box-shadow:0 0 8px var(--glow)}
 .ac{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--panel)}
+.pubgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin:0 0 18px}.pubgrid>.ac{min-width:0}.cp-cta{margin:0 0 18px;padding:12px 14px;border:1px dashed var(--accent);border-radius:12px;color:var(--txt)}
 .ac-top{padding:14px 16px;color:#fff;display:flex;justify-content:space-between;align-items:center;gap:8px}
 .ac.g .ac-top{background:linear-gradient(135deg,#0E5E33,#14854A)}
 .ac.b .ac-top{background:linear-gradient(135deg,#1B3A6B,#2A5CA8)}
@@ -229,6 +230,7 @@ footer.ft{padding:20px 12px 28px}
 </div></header>
 <div class="intro"><div class="disc" data-i18n="disc"></div></div>
 <div class="wrap" id="viewMain"><section id="landing">
+<div id="cpLandWrap" hidden><h2 class="sec-h" data-i18n="cpLandTitle">🎟️ Tutan kuponlar</h2><div class="cp-cta" id="cpLandPend" hidden></div><div class="pubgrid" id="cpLand"></div></div>
 <div id="teaser"></div>
 <div id="pkWrap" hidden><h2 class="sec-h" data-i18n="pkTitle">📣 Paylaşım kartları</h2>
 <div class="wn-row pk-row" id="pkRow"></div>
@@ -250,6 +252,7 @@ footer.ft{padding:20px 12px 28px}
 <details><summary data-i18n="faq4q">Kazanç garantisi var mı?</summary><p data-i18n="faq4a">Hayır. Tahminler istatistikseldir, kazanç garantisi yoktur. Tutmayanlar dahil tüm sonuçlar Geçmiş Tahminler’de herkese açık. BetFans bahis almaz ve hiçbir bahis sitesine yönlendirmez; Türkiye’de yasal bahis yalnızca iddaa ve yetkili bayileri üzerinden oynanır. Yalnızca 18 yaş ve üzeri içindir; kaybetmeyi göze alamayacağın parayla oynama.</p></details>
 </div>
 </section><main>
+<div id="pubWrap"><h2 class="sec-h" data-i18n="pubTitle">🎟️ Günün kuponları</h2><div class="pubgrid" id="pubcoupons"></div></div>
 <div class="bar">
   <select id="sport" data-i18n-aria="pLeague" aria-label="Lig" onchange="onSport()">
     <option value="soccer_epl" data-i18n="sel_epl"></option>
@@ -281,10 +284,6 @@ footer.ft{padding:20px 12px 28px}
 <div id="matches"></div>
 </main>
 <aside>
-<div class="acwrap" id="pubWrap">
-  <h3 data-i18n="pubTitle">🎟️ Günün kuponları</h3>
-  <div id="pubcoupons"></div>
-</div>
 <div class="acwrap">
   <h3 data-i18n="acTitle"></h3>
   <div class="acstake" id="acStake" hidden><label for="stake" id="stakeLbl"></label><input id="stake" type="number" value="100" oninput="renderAutoCoupons()"><span>TL</span></div>
@@ -311,9 +310,9 @@ footer.ft{padding:20px 12px 28px}
     <option value="basketball_euroleague" data-i18n="sel_el"></option>
     </select>
   </div>
+  <details class="perf" id="cpHistBox" open><summary data-i18n="cpHist">🎟️ Kupon geçmişi</summary><div id="cpHist"></div></details>
   <div class="hpsum" id="histSum"></div>
   <details class="perf" id="histPerfBox"><summary data-i18n="perfSum">📊 Performans (lig · pazar · kalibrasyon)</summary><div id="histPerf"></div></details>
-  <details class="perf" id="cpHistBox"><summary data-i18n="cpHist">🎟️ Kupon geçmişi</summary><div id="cpHist"></div></details>
   <div id="history"></div>
 </div></div>
 <footer class="ft"><img src="assets/logo-arma.png" width="49" height="56" alt=""><span data-i18n="footTxt"><b>BetFans</b> · <span class="age">18+</span> · Sorumlu oyna · İstatistiksel tahmin, garanti değildir. BetFans bahis almaz, bahis sitelerine yönlendirmez; Türkiye’de yasal bahis yalnızca iddaa ve yetkili bayileri üzerinden oynanır.</span><span class="kunye"><span data-i18n="kunye">Künye: CCG Consulting Ltd. (KKTC’de kayıtlı) · Gazimağusa, KKTC · İletişim:</span> <a href="mailto:info@ccg-consulting.co">info@ccg-consulting.co</a> · <a href="https://db-ip.com" rel="noopener" target="_blank">IP Geolocation by DB-IP</a></span></footer>
@@ -368,10 +367,11 @@ Object.assign(T.tr,{withdrawn:'geri çekildi'});Object.assign(T.en,{withdrawn:'w
 Object.assign(T.tr,{bansLbl:'Cezalı',banMEN:'men',banKK:'kırmızı kart',banSK:'sarı kart',bansSrc:'Kaynak: TFF'});Object.assign(T.en,{bansLbl:'Suspended',banMEN:'ban',banKK:'red card',banSK:'yellow cards',bansSrc:'Source: TFF'});Object.assign(T.de,{bansLbl:'Gesperrt',banMEN:'Sperre',banKK:'Rote Karte',banSK:'Gelbsperre',bansSrc:'Quelle: TFF'});Object.assign(T.ar,{bansLbl:'موقوف',banMEN:'إيقاف',banKK:'بطاقة حمراء',banSK:'بطاقات صفراء',bansSrc:'المصدر: TFF'});
 function bansHtml(m){const b=m.bans;if(!b)return '';const side=(tm,xs)=>xs&&xs.length?`<b>${esc(tm)}</b>: ${xs.map(x=>`${esc(x.n)} (${t('ban'+x.t)})`).join(', ')}`:'';return `<div class="mdt">🚫 ${t('bansLbl')} — ${[side(m.home,b.home),side(m.away,b.away)].filter(Boolean).join(' · ')} <small style="opacity:.6">${t('bansSrc')}</small></div>`;}
 Object.assign(T.tr,{histAllPub:'Geri çekilenler dahil',histAllPubTip:'Yayınlanan tüm tahminler: geri çekilenler gerçek sonuçlarıyla sayılır'});Object.assign(T.en,{histAllPub:'Incl. withdrawn',histAllPubTip:'All published picks: withdrawn picks counted with their real results'});Object.assign(T.de,{histAllPub:'Inkl. zurückgezogene',histAllPubTip:'Alle veröffentlichten Tipps: zurückgezogene mit tatsächlichem Ergebnis gezählt'});Object.assign(T.ar,{histAllPub:'مع المسحوبة',histAllPubTip:'كل التوقعات المنشورة: المسحوبة تُحتسب بنتيجتها الفعلية'});
-Object.assign(T.tr,{pubTitle:'🎟️ Günün kuponları',cpHist:'🎟️ Kupon geçmişi',cpValue:'💎 Değer kuponu',cpFav:'⭐ Favori kuponu',cpMatches:'maç',cpWon:'TUTTU',cpLost:'Tutmadı',cpVoid:'İade',cpPend:'Bekliyor',cpNone:'Bugün için yayınlanmış kupon yok.',cpHistNone:'Henüz sonuçlanan kupon yok.',cpFavNote:'En olası sonuçlar · fiyat avantajı aranmaz',cpValueNote:'Fiyat avantajlı tahminlerimizden'});Object.assign(T.en,{pubTitle:'🎟️ Today’s coupons',cpHist:'🎟️ Coupon history',cpValue:'💎 Value coupon',cpFav:'⭐ Favourites coupon',cpMatches:'matches',cpWon:'WON',cpLost:'Lost',cpVoid:'Void',cpPend:'Pending',cpNone:'No coupon published for today.',cpHistNone:'No settled coupons yet.',cpFavNote:'Most likely outcomes · no price edge required',cpValueNote:'From our price-edge picks'});Object.assign(T.de,{pubTitle:'🎟️ Scheine des Tages',cpHist:'🎟️ Schein-Verlauf',cpValue:'💎 Value-Schein',cpFav:'⭐ Favoriten-Schein',cpMatches:'Spiele',cpWon:'GEWONNEN',cpLost:'Verloren',cpVoid:'Storniert',cpPend:'Offen',cpNone:'Heute kein Schein veröffentlicht.',cpHistNone:'Noch keine abgerechneten Scheine.',cpFavNote:'Wahrscheinlichste Ausgänge · kein Preisvorteil nötig',cpValueNote:'Aus unseren Tipps mit Preisvorteil'});Object.assign(T.ar,{pubTitle:'🎟️ قسائم اليوم',cpHist:'🎟️ سجل القسائم',cpValue:'💎 قسيمة القيمة',cpFav:'⭐ قسيمة المرشحين',cpMatches:'مباريات',cpWon:'فازت',cpLost:'خسرت',cpVoid:'ملغاة',cpPend:'قيد الانتظار',cpNone:'لا توجد قسيمة منشورة اليوم.',cpHistNone:'لا توجد قسائم محسومة بعد.',cpFavNote:'النتائج الأكثر احتمالاً · دون شرط ميزة السعر',cpValueNote:'من توقعاتنا ذات ميزة السعر'});
+Object.assign(T.tr,{pubTitle:'🎟️ Günün kuponları',cpHist:'🎟️ Kupon geçmişi',cpValue:'💎 Değer kuponu',cpFav:'⭐ Favori kuponu',cpMatches:'maç',cpWon:'TUTTU',cpLost:'Tutmadı',cpVoid:'İade',cpPend:'Bekliyor',cpNone:'Bugün için yayınlanmış kupon yok.',cpHistNone:'Henüz sonuçlanan kupon yok.',cpFavNote:'En olası sonuçlar · fiyat avantajı aranmaz',cpValueNote:'Fiyat avantajlı tahminlerimizden',cpLandTitle:'🎟️ Tutan kuponlar',cpLandPend:'Bugün {n} kupon yayınlandı · maçlar ve olasılıklar üyelere açık.'});Object.assign(T.en,{pubTitle:'🎟️ Today’s coupons',cpHist:'🎟️ Coupon history',cpValue:'💎 Value coupon',cpFav:'⭐ Favourites coupon',cpMatches:'matches',cpWon:'WON',cpLost:'Lost',cpVoid:'Void',cpPend:'Pending',cpNone:'No coupon published for today.',cpHistNone:'No settled coupons yet.',cpFavNote:'Most likely outcomes · no price edge required',cpValueNote:'From our price-edge picks',cpLandTitle:'🎟️ Winning coupons',cpLandPend:'{n} coupons published today · matches and probabilities are for members.'});Object.assign(T.de,{pubTitle:'🎟️ Scheine des Tages',cpHist:'🎟️ Schein-Verlauf',cpValue:'💎 Value-Schein',cpFav:'⭐ Favoriten-Schein',cpMatches:'Spiele',cpWon:'GEWONNEN',cpLost:'Verloren',cpVoid:'Storniert',cpPend:'Offen',cpNone:'Heute kein Schein veröffentlicht.',cpHistNone:'Noch keine abgerechneten Scheine.',cpFavNote:'Wahrscheinlichste Ausgänge · kein Preisvorteil nötig',cpValueNote:'Aus unseren Tipps mit Preisvorteil',cpLandTitle:'🎟️ Gewonnene Scheine',cpLandPend:'Heute {n} Scheine veröffentlicht · Spiele und Wahrscheinlichkeiten für Mitglieder.'});Object.assign(T.ar,{pubTitle:'🎟️ قسائم اليوم',cpHist:'🎟️ سجل القسائم',cpValue:'💎 قسيمة القيمة',cpFav:'⭐ قسيمة المرشحين',cpMatches:'مباريات',cpWon:'فازت',cpLost:'خسرت',cpVoid:'ملغاة',cpPend:'قيد الانتظار',cpNone:'لا توجد قسيمة منشورة اليوم.',cpHistNone:'لا توجد قسائم محسومة بعد.',cpFavNote:'النتائج الأكثر احتمالاً · دون شرط ميزة السعر',cpValueNote:'من توقعاتنا ذات ميزة السعر',cpLandTitle:'🎟️ قسائم فائزة',cpLandPend:'نُشرت اليوم {n} قسائم · المباريات والاحتمالات للأعضاء.'});
 // Yayinlanan kuponlar (2026-11-01): sunucuda uretilir ve sonuclanir (bahis_tahmin.coupons); bekleyenler yalniz onayli uyeye gelir.
 function pubCouponCard(c){const res=c.result==='hit'?'✅ '+t('cpWon'):c.result==='miss'?'❌ '+t('cpLost'):c.result==='void'?'➖ '+t('cpVoid'):'⏳ '+t('cpPend');const ttl=(c.kind==='value'?t('cpValue'):t('cpFav'))+' · '+c.size+' '+t('cpMatches');const rows=(c.legs||[]).map(l=>{const s=l.result==='hit'?'✅':l.result==='miss'?'❌':l.result==='void'?'➖':'⏳';return `<div class="ac-leg"><div><div class="tm">${s} ${esc(l.home)} – ${esc(l.away)} <small style="opacity:.6">· ${fmtDate(l.commence)}</small></div><span class="mc">${mkn(l.market)}${l.score?' · '+esc(l.score):''}</span></div><div class="od">${(1/l.prob).toFixed(2)}<br><small style="opacity:.6;font-weight:400">${t('colFair')} · ${P(Math.round(l.prob*100))}</small></div></div>`;}).join('');return `<div class="ac ${c.kind==='value'?'b':'g'}"><div class="ac-top"><div class="ttl">${ttl}<small>${c.kind==='fav'?t('cpFavNote'):t('cpValueNote')}</small></div><div class="hitb">${P(Math.round(c.prob*100))}<br>${t('cHit')}</div></div><div class="ac-body">${rows}</div><div class="ac-foot"><div class="lo">${t('totalFair')}<b>${(1/c.prob).toFixed(2)}</b></div><div class="ro"><b>${res}</b></div></div></div>`;}
-async function loadCoupons(){let cs=[];try{cs=(await api({action:'coupons'})).coupons||[];}catch(e){}
+async function loadCoupons(){let cs=[],pc=0;try{const d=await api({action:'coupons'});cs=d.coupons||[];pc=d.pending_count||0;}catch(e){}
+ const lw=document.getElementById('cpLandWrap');if(lw){const won=cs.filter(c=>c.result==='hit').slice(0,4);const pe=document.getElementById('cpLandPend');if(pe){pe.hidden=!pc;pe.textContent=t('cpLandPend').replace('{n}',pc);}document.getElementById('cpLand').innerHTML=won.map(pubCouponCard).join('');lw.hidden=!won.length&&!pc;}
  const pub=document.getElementById('pubcoupons');if(pub){const d0=cs.length?cs[0].day:null;const cur=cs.filter(c=>c.day===d0);pub.innerHTML=cur.length?cur.map(pubCouponCard).join(''):`<div class="empty2">${t('cpNone')}</div>`;}
  const h=document.getElementById('cpHist');if(h){const st=cs.filter(c=>c.result);const w=st.filter(c=>c.result==='hit').length,l=st.filter(c=>c.result==='miss').length;h.innerHTML=st.length?`<div class="hpsum"><span>✅ ${w}</span><span>❌ ${l}</span></div>`+st.map(pubCouponCard).join(''):`<div class="empty2">${t('cpHistNone')}</div>`;}}
 function tierOf(p){return t(p>=50?'tierFav':p>=30?'tierMid':'tierLong');} // p yuzde; sunucudaki tier() ile ayni esikler
@@ -421,7 +421,7 @@ function drawQR(link){const go=()=>document.querySelectorAll('.tgqr').forEach(e=
  if(window.QRCode)return go();if(!qrLib){qrLib=document.createElement('script');qrLib.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';qrLib.onload=()=>go();document.head.appendChild(qrLib);}}
 // Tanıtım (2026-09-29): üye olmayana ana sayfada son 10 TUTAN tahmin (kullanıcı kararı: özet satırı yok).
 // Tutmayanlar dahil tüm sonuçlar Geçmiş sekmesinde herkese açık; not bunu ve "garanti değildir"i söyler.
-async function loadTeaser(){const el=document.getElementById('teaser');if(!el)return;let rows=[];try{rows=(await api({action:'history'})).rows||[];}catch(e){}
+async function loadTeaser(){loadCoupons();const el=document.getElementById('teaser');if(!el)return;let rows=[];try{rows=(await api({action:'history'})).rows||[];}catch(e){}
  const wins=rows.filter(r=>r.result==='hit'||r.result==='half_hit').sort((a,b)=>String(b.commence_time||b.match_date).localeCompare(String(a.commence_time||a.match_date))).slice(0,10);
  if(!wins.length){el.innerHTML='';return;}
  const li=wins.map(r=>`<div class="wn"><div class="wn-top"><span class="wn-badge">${r.result==='half_hit'?t('halfWon'):'✅ '+t('won')}</span><span>${r.commence_time?fmtDate(r.commence_time):(r.match_date?new Date(r.match_date).toLocaleDateString(LOC[lang]||'tr-TR',{day:'numeric',month:'short'}):'')}</span></div><div class="wn-m">${esc(r.home)} – ${esc(r.away)}</div><div class="wn-l">${esc(lgName(r.sport))}</div><div class="wn-bot"><div class="wn-mk">${mkn(r.market)}<small>${t('score')} ${esc(r.actual_score||'–')}</small></div><div class="wn-odds">${r.model_prob?(1/+r.model_prob).toFixed(2):''}<small>${t('fairShort')}${r.model_prob?' · '+P(Math.round(+r.model_prob*100)):''}</small></div></div></div>`).join('');
