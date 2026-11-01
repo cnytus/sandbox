@@ -2,7 +2,7 @@
 // Calistir: npx deno test supabase/functions/bahis-tahmin/model_test.ts
 import { assert, assertEquals, assertAlmostEquals } from "jsr:@std/assert@1";
 import { probs, probsLite, shinDevig, median, norm, findKey, findPair, evalMkt, extraPick, dutchPrice, dnbPrice } from "./model.ts";
-import { ahResult, ahBest, onePick, fairProb, tier, teamHit, bansFor } from "./model.ts";
+import { ahResult, ahBest, onePick, fairProb, tier, teamHit, bansFor, pickLegs, couponResult } from "./model.ts";
 import { basketElo, eloPredict, ELO_MEAN } from "./model.ts";
 import { Phi, overWP, fitMu, sideWP, lineResult } from "./model.ts";
 
@@ -166,4 +166,18 @@ Deno.test("findKey: Inter Milan / AC Milan form anahtarlari karismaz (CSV_ALIAS 
   assertEquals(findKey("Inter Milan", yeni), "intermilan");  // duzeltme: tam eslesme
   assertEquals(findKey("AC Milan", yeni), "milan");
   assertEquals(norm("FC Internazionale Milano"), "internazionalemilano"); // football-data.org adi -> CSV_ALIAS anahtari
+});
+
+Deno.test("pickLegs + couponResult: kupon ayaklari ve sonucu", ()=>{
+  const end=Date.parse("2026-11-01T20:59:59Z");
+  const c=(h,p,t)=>({ sport:"s", home:h, away:h+"x", prob:p, commence:t });
+  const today=[c("A",.8,"2026-11-01T17:00:00Z"),c("B",.7,"2026-11-01T18:00:00Z"),c("C",.6,"2026-11-01T19:00:00Z")], tom=[c("D",.9,"2026-11-02T17:00:00Z")];
+  assertEquals(pickLegs([...today,...tom],3,end)!.map((l)=>l.home), ["A","B","C"]);   // bugun yetiyor -> yarin girmez
+  assertEquals(pickLegs([...today,...tom],4,end)!.map((l)=>l.home), ["D","A","B","C"]); // 4'lu icin 48 saate genisler
+  assertEquals(pickLegs(today,4,end), null);
+  assertEquals(pickLegs([c("A",.8,"2026-11-01T17:00:00Z"),c("A",.75,"2026-11-01T17:00:00Z"),...today.slice(1)],3,end)!.length, 3); // ayni mac tek ayak
+  assertEquals(couponResult([{result:"hit"},{result:null},{result:"miss"}]), "miss");
+  assertEquals(couponResult([{result:"hit"},{result:null}]), null);
+  assertEquals(couponResult([{result:"hit"},{result:"void"},{result:"hit"}]), "hit");
+  assertEquals(couponResult([{result:"void"},{result:"void"}]), "void");
 });
