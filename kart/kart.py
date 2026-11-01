@@ -166,6 +166,8 @@ def ciz_kupon(c, zemin):
     yazi(img, f"{1 / float(c['prob']):.2f}", F_XB, 180, 948 if len(legs) <= 3 else 972, (80, 232, 59, 255), max_w=560, glow=(80, 232, 59, 150))
     d = datetime.strptime(c["day"], "%Y-%m-%d").date()
     yazi(img, f"adil toplam oran · olasılık %{round(100 * float(c['prob']))} · {d.day} {AY[d.month - 1]}", F_XB, 46, 1118, (255, 255, 255, 255))
+    if c.get("retro"):  # geriye dönük hesaplanan kupon: o gün yayınlanmadı (paylaşılan görsel yanıltmasın)
+        yazi(img, "GERİYE DÖNÜK HESAPLAMA · O GÜN YAYINLANMADI", F_B, 30, 1190, (255, 210, 80, 255), max_w=900)
     return img.convert("RGB")
 
 
@@ -299,6 +301,8 @@ def calis(notify=True):
     for c in kup:
         name = kupon_ad(c)
         if name in sent: continue
+        if c.get("retro"):  # geriye dönük kupon Telegram'a gitmez (kullanıcı kararı 2026-11-01); yalnız galeri
+            sent.add(name); continue
         if notify:
             if n >= NOTIFY_MAX: break
             if not telegram_kupon(c, name): continue
@@ -324,7 +328,7 @@ def test():
     assert img.size == (1080, 1350)
     assert ciz_intl({**r, "odds": 7.6}, Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA")).size == (1080, 1350)
     kaydet(img, ad(r))
-    c = {"day": "2026-11-01", "kind": "value", "size": 4, "prob": 0.1512, "result": "hit",
+    c = {"day": "2026-11-01", "kind": "value", "size": 4, "prob": 0.1512, "result": "hit", "retro": True,
          "legs": [{"home": "Çaykur Rizespor", "away": "Fenerbahce", "market": "2", "score": "0-3"}, {"home": "Real Betis", "away": "CA Osasuna", "market": "1", "score": "5-2"},
                   {"home": "Lazio", "away": "Monza", "market": "U", "score": "1-0"}, {"home": "Arsenal", "away": "Leeds United", "market": "1", "score": "2-0"}]}
     assert kupon_ad(c) == "kart-kupon-2026-11-01-value-4" and ciz_kupon(c, Image.open(os.path.join(HERE, "kart-zemin.png")).convert("RGBA")).size == (1080, 1350)
